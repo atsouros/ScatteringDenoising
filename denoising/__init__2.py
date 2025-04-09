@@ -151,7 +151,7 @@ Use * or + to connect more than one condition.
 
 def compute_std(
     target, contamination_arr,
-    J=None, L=4, M=None, N=None, l_oversampling=1, frequency_factor=1,
+    J=None, L=4, M=None, N=None, l_oversampling=1, frequency_factor=1, s_cov_func = None,
     mode='image',
     device='gpu', wavelets='morlet', seed=None,
     if_large_batch=False,
@@ -185,6 +185,20 @@ Use * or + to connect more than one condition.
         x, use_ref=True, if_large_batch=if_large_batch, C11_criteria=C11_criteria, 
         normalization=normalization, pseudo_coef=pseudo_coef,remove_edge=remove_edge)['for_synthesis']
             
+    if s_cov_func is None:
+        def func_s(x):
+            return st_calc.scattering_cov(
+                x, use_ref=True, if_large_batch=if_large_batch, C11_criteria=C11_criteria, 
+                normalization=normalization, pseudo_coef=pseudo_coef, remove_edge=remove_edge
+            )['for_synthesis']
+    else:
+        def func_s(x):
+            coeffs =  st_calc.scattering_cov(
+                x, use_ref=True, if_large_batch=if_large_batch, C11_criteria=C11_criteria, 
+                normalization=normalization, pseudo_coef=pseudo_coef, remove_edge=remove_edge
+            )
+            return s_cov_func(coeffs)
+
     def func(image):
         coef_list = []
         coef_list.append(func_s(image))        
@@ -228,7 +242,7 @@ Use * or + to connect more than one condition.
     return std_func(target)
 
 def denoise_double(
-    target1, target2, contamination_arr, std, std_double = None, image_init1=None,image_init2=None, n_batch = 10,
+    target1, target2, contamination_arr, std, std_double = None, image_init1=None,image_init2=None, n_batch = 10, s_cov_func = None,
     J=None, L=4, M=None, N=None, l_oversampling=1, frequency_factor=1,
     mode='image', optim_algorithm='LBFGS', steps=300, learning_rate=0.2,
     device='gpu', wavelets='morlet', seed=None,
@@ -320,11 +334,19 @@ Use * or + to connect more than one condition.
             # Single-field case
             st_calc.add_ref(ref=ref_map1)
 
-            def func_s(x):
-                return st_calc.scattering_cov(
-                    x, use_ref=True, if_large_batch=if_large_batch, C11_criteria=C11_criteria, 
-                    normalization=normalization, pseudo_coef=pseudo_coef, remove_edge=remove_edge
-                )['for_synthesis']
+            if s_cov_func is None:
+                def func_s(x):
+                    return st_calc.scattering_cov(
+                        x, use_ref=True, if_large_batch=if_large_batch, C11_criteria=C11_criteria, 
+                        normalization=normalization, pseudo_coef=pseudo_coef, remove_edge=remove_edge
+                    )['for_synthesis']
+            else:
+                def func_s(x):
+                    coeffs =  st_calc.scattering_cov(
+                        x, use_ref=True, if_large_batch=if_large_batch, C11_criteria=C11_criteria, 
+                        normalization=normalization, pseudo_coef=pseudo_coef, remove_edge=remove_edge
+                    )
+                    return s_cov_func(coeffs)
             
             coef_list.append(func_s(map1))
 
@@ -347,9 +369,8 @@ Use * or + to connect more than one condition.
     def BR_loss(target1, target2, image1, image2):
         loss1 = BR_loss_single(target1, image1, std[0], contamination_arr[:, 0])
         loss2 = BR_loss_single(target2, image2, std[1], contamination_arr[:, 1])
-        loss3 = BR_loss_double(target1, image1, target2, image2, contamination_arr)
-
-        return  (loss1 + loss2 + loss3) / 3
+        # loss3 = BR_loss_double(target1, image1, target2, image2, contamination_arr)
+        return  (loss1 + loss2) / 2
         
     def BR_loss_single(target, image, _std, contamination_arr):
 
@@ -474,6 +495,12 @@ def denoise_general_double(
     target2 = to_tensor(target2)
     image_init1 = to_tensor(image_init1)
     image_init2 = to_tensor(image_init2)
+
+    # calculate statistics for target images
+    estimator_single = estimator_function(target1, target1)
+    estimator_double = estimator_function(target1, target1, target2, target2)
+
+    print('# of estimators: ', estimator_single.shape[-1] + estimator_double.shape[-1])
     
     # Define optimizable image model
     class OptimizableImage(torch.nn.Module):
@@ -863,14 +890,6 @@ Use * or + to connect more than one condition.
 
         # Step 7: Compute final loss (mean over noise realizations)
         loss_tot = squared_norms.mean()
-
-        print(torch.mean(target))
-        print(torch.mean(image))
-        print(torch.mean(std))
-        print(variance)
-        print(loss_tot.item())
-        sys.exit()
-
 
         return loss_tot
     
@@ -1614,7 +1633,7 @@ def s_cov_WN(st_calc, N_realization=500, coef_name='for_synthesis_iso'):
 # select s_cov['for_synthesis_iso'] with mask
 def s_cov_iso_threshold(s_cov, param_list):
     '''
-    this can be any function that eats the s_cov from denoising.s_cov()
+    this can be any function that eats the s_cov from scattering.s_cov()
     and some other parameters, and then outputs a flattened torch tensor.
     The output is flattened instead of with size of [N_image, -1] because
     the mask for each image can be different.
@@ -1782,7 +1801,6 @@ if __name__ == "__main__":
 
     print(0)
     
-    
 # for large data, scattering computation needs to be chunked to hold on memory
 def chunk_model(X, st_calc, nchunks, **kwargs):
     partition = np.array_split(np.arange(X.shape[0]), nchunks)
@@ -1840,9 +1858,8 @@ def prepare_threshold_func(
 
     idx, covs_all = harmonic_transform(s_cov_set, mask=None, output_info=True, if_iso=if_iso)
     mean = covs_all.mean(0)
-    print(len(covs_all))
-    std = covs_all.std(0) * (len(covs_all) / (len(covs_all)-1))**0.5
-#     std = covs_all.std(0)
+    # std = covs_all.std(0) * (len(covs_all) / (len(covs_all)-1))**0.5
+    std = covs_all.std(0)
     
     # compute thresholding mask
     mask_list = []
@@ -1863,6 +1880,65 @@ def prepare_threshold_func(
     threshold_func= lambda s_cov_set, params: harmonic_transform(s_cov_set, mask=params, if_iso=if_iso)
     
     return idx, to_numpy(mean), to_numpy(std), threshold_func, to_numpy(masks)
+
+def threshold_func_test(s_cov_set, fourier_angle=True, axis='all'):
+    
+    # Initialize the angle operator for the Fourier transform over angles
+    angle_operator = FourierAngle()
+
+    # Define the harmonic transform function with the modified mask
+    def harmonic_transform(s_cov_set):
+        # Get coefficient vectors and the index vectors
+        coef = s_cov_set['for_synthesis']
+        idx = scale_annotation_a_b(to_numpy(s_cov_set['index_for_synthesis']).T)
+        
+        # print("\nBefore Thresholding:")
+        # cov_types, counts = np.unique(idx[:, 0], return_counts=True)
+        # for cov_type, count in zip(cov_types, counts):
+        #     print(f"Type: {cov_type}, Count: {count}")
+
+        # Perform Fourier transform on angle indexes (l1, l2, l3) if enabled
+        coef, idx = angle_operator(coef, idx, axis=axis)
+
+        # Create a mask of the same length as the number of columns in coef
+        mask = torch.zeros((coef.shape[-1],), dtype=torch.bool)
+
+        # Always include non-Fourier types (mean, P00, S1) in the mask
+        non_fourier_mask = np.isin(idx[:, 0], ['mean', 'P00', 'S1'])
+        mask[torch.from_numpy(np.where(non_fourier_mask)[0])] = True
+
+        # Filter only for C01 and C11 types (both real and imaginary)
+        is_c01_c11 = np.isin(idx[:, 0], ['C01re', 'C01im', 'C11re', 'C11im'])
+
+        # Extract relevant angular indices (l1, l2, l3) for these types
+        l1 = idx[is_c01_c11, 4].astype(int)
+        l2 = idx[is_c01_c11, 5].astype(int)
+        l3 = idx[is_c01_c11, 6].astype(int)
+
+        # Find valid indices where l1, l2, l3 are in {0, 1}
+        valid_indices = (l1 <= 1) & (l2 <= 1) & (l3 <= 1)
+
+        # Get the positions of valid coefficients
+        valid_positions = np.where(is_c01_c11)[0][valid_indices]
+
+        # Set the mask to True for these valid positions
+        mask[torch.tensor(valid_positions, dtype=torch.long)] = True
+
+        # print("\nAfter Thresholding:")
+        # idx_after = idx[torch.from_numpy(np.where(mask.numpy())[0])]
+        # cov_types_after, counts_after = np.unique(idx_after[:, 0], return_counts=True)
+        # for cov_type, count in zip(cov_types_after, counts_after):
+        #     print(f"Type: {cov_type}, Count: {count}")
+
+        # Output the transformed coefficients with the valid mask
+        return coef[:, mask] if mask is not None else coef
+
+    # Generate the threshold function that keeps only the first two harmonics
+    threshold_func = lambda s_cov_set: harmonic_transform(s_cov_set)
+
+    # Return the threshold function
+    return threshold_func
+
 
 
 def convolve_by_FFT(field, func_in_Fourier, device='cpu'):
