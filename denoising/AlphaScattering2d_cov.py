@@ -3,11 +3,11 @@ import torch
 import scipy.io as sio
 import math
 import torch.nn.functional as F
-from scattering.backend import cdgmm, Modulus, SubsampleFourier, Pad, mulcu, \
+from denoising.backend import cdgmm, Modulus, SubsampleFourier, Pad, mulcu, \
     SubInitSpatialMeanR, SubInitSpatialMeanC, DivInitStdR, DivInitStd, \
     padc, conjugate, maskns, masks_subsample_shift3, \
     extract_shift3
-from scattering.FiltersSet import FiltersSet
+from denoising.FiltersSet import FiltersSet
 
 if __name__ == "__main__":
     AlphaScattering2d_cov()
