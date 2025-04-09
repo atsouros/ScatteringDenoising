@@ -18,6 +18,49 @@ from denoising.AlphaScattering2d_cov import AlphaScattering2d_cov
 from denoising.angle_transforms import FourierAngle
 from denoising.scale_transforms import FourierScale
 
+def generate_cmb_map(nside, spectral_index=-2.035, amplitude=1.0, device='cpu'):
+    """
+    Generates a Gaussian random field (GRF) with a power spectrum P(k) ~ k^spectral_index,
+    and scales its amplitude.
+
+    Args:
+        nside (int): Number of pixels along x,y-axis.
+        spectral_index (float, optional): Spectral index of the power spectrum. Defaults to -2.035.
+        amplitude (float, optional): Scaling factor for the field's amplitude.
+        device (str, optional): Device to store the tensor ('cpu' or 'cuda').
+
+    Returns:
+        torch.Tensor: GRF of shape (nside, nside).
+    """
+    # Create k-space grid
+    kx = torch.fft.fftfreq(nside, d=1.0, device=device) * nside
+    ky = torch.fft.fftfreq(nside, d=1.0, device=device) * nside
+    kx, ky = torch.meshgrid(kx, ky, indexing="ij")
+    k = torch.sqrt(kx**2 + ky**2)
+
+    # Avoid division by zero at k = 0
+    k_min = 1.0  # Avoid singularity at k=0
+    k = torch.where(k == 0, torch.tensor(k_min, device=device), k)
+
+    # Power spectrum P(k) ~ k^spectral_index
+    P_k = k**spectral_index
+
+    # Generate random Gaussian field in Fourier space
+    real_part = torch.randn(nside, nside, device=device)
+    imag_part = torch.randn(nside, nside, device=device)
+    noise = real_part + 1j * imag_part
+
+    # Apply power spectrum scaling
+    fourier_field = noise * torch.sqrt(P_k)
+
+    # Inverse Fourier Transform to real space
+    field = torch.fft.ifft2(fourier_field).real
+
+    # Normalize and scale by amplitude
+    field = (field - field.mean()) / field.std()  # Normalize to mean 0, std 1
+    field *= amplitude  # Scale by desired amplitude
+
+    return field
 
 def compute_std_double(
     image1, image2, contamination_arr, image_ref1=None, image_ref2=None,
@@ -108,7 +151,7 @@ Use * or + to connect more than one condition.
 
 def compute_std(
     target, contamination_arr,
-    J=None, L=4, M=None, N=None, l_oversampling=1, frequency_factor=1, s_cov_func = None,
+    J=None, L=4, M=None, N=None, l_oversampling=1, frequency_factor=1,
     mode='image',
     device='gpu', wavelets='morlet', seed=None,
     if_large_batch=False,
@@ -142,20 +185,6 @@ Use * or + to connect more than one condition.
         x, use_ref=True, if_large_batch=if_large_batch, C11_criteria=C11_criteria, 
         normalization=normalization, pseudo_coef=pseudo_coef,remove_edge=remove_edge)['for_synthesis']
             
-    if s_cov_func is None:
-        def func_s(x):
-            return st_calc.scattering_cov(
-                x, use_ref=True, if_large_batch=if_large_batch, C11_criteria=C11_criteria, 
-                normalization=normalization, pseudo_coef=pseudo_coef, remove_edge=remove_edge
-            )['for_synthesis']
-    else:
-        def func_s(x):
-            coeffs =  st_calc.scattering_cov(
-                x, use_ref=True, if_large_batch=if_large_batch, C11_criteria=C11_criteria, 
-                normalization=normalization, pseudo_coef=pseudo_coef, remove_edge=remove_edge
-            )
-            return s_cov_func(coeffs)
-
     def func(image):
         coef_list = []
         coef_list.append(func_s(image))        
@@ -199,7 +228,7 @@ Use * or + to connect more than one condition.
     return std_func(target)
 
 def denoise_double(
-    target1, target2, contamination_arr, std, std_double = None, image_init1=None,image_init2=None, n_batch = 10, s_cov_func = None,
+    target1, target2, contamination_arr, std, std_double = None, image_init1=None,image_init2=None, n_batch = 10,
     J=None, L=4, M=None, N=None, l_oversampling=1, frequency_factor=1,
     mode='image', optim_algorithm='LBFGS', steps=300, learning_rate=0.2,
     device='gpu', wavelets='morlet', seed=None,
@@ -291,19 +320,11 @@ Use * or + to connect more than one condition.
             # Single-field case
             st_calc.add_ref(ref=ref_map1)
 
-            if s_cov_func is None:
-                def func_s(x):
-                    return st_calc.scattering_cov(
-                        x, use_ref=True, if_large_batch=if_large_batch, C11_criteria=C11_criteria, 
-                        normalization=normalization, pseudo_coef=pseudo_coef, remove_edge=remove_edge
-                    )['for_synthesis']
-            else:
-                def func_s(x):
-                    coeffs =  st_calc.scattering_cov(
-                        x, use_ref=True, if_large_batch=if_large_batch, C11_criteria=C11_criteria, 
-                        normalization=normalization, pseudo_coef=pseudo_coef, remove_edge=remove_edge
-                    )
-                    return s_cov_func(coeffs)
+            def func_s(x):
+                return st_calc.scattering_cov(
+                    x, use_ref=True, if_large_batch=if_large_batch, C11_criteria=C11_criteria, 
+                    normalization=normalization, pseudo_coef=pseudo_coef, remove_edge=remove_edge
+                )['for_synthesis']
             
             coef_list.append(func_s(map1))
 
@@ -327,6 +348,7 @@ Use * or + to connect more than one condition.
         loss1 = BR_loss_single(target1, image1, std[0], contamination_arr[:, 0])
         loss2 = BR_loss_single(target2, image2, std[1], contamination_arr[:, 1])
         loss3 = BR_loss_double(target1, image1, target2, image2, contamination_arr)
+
         return  (loss1 + loss2 + loss3) / 3
         
     def BR_loss_single(target, image, _std, contamination_arr):
@@ -452,12 +474,6 @@ def denoise_general_double(
     target2 = to_tensor(target2)
     image_init1 = to_tensor(image_init1)
     image_init2 = to_tensor(image_init2)
-
-    # calculate statistics for target images
-    estimator_single = estimator_function(target1, target1)
-    estimator_double = estimator_function(target1, target1, target2, target2)
-
-    print('# of estimators: ', estimator_single.shape[-1] + estimator_double.shape[-1])
     
     # Define optimizable image model
     class OptimizableImage(torch.nn.Module):
@@ -552,6 +568,37 @@ def denoise_general_double(
         image_model.image2.cpu().detach().numpy()
     )
 
+# image pre-processing
+def binning2x2(image):
+    return (image[...,::2,::2] + image[...,1::2,::2] + image[...,::2,1::2] + image[...,1::2,1::2])/4
+
+def whiten(image, overall=False):
+    if overall:
+        return (image - image.mean()) / image.std()
+    else:
+        return (image - image.mean((-2,-1))[:,None,None]) / image.std((-2,-1))[:,None,None]
+
+def filter_radial(img, func, backend='np'):
+    M, N = img.shape[-2:]
+    X = np.arange(M)[:,None]
+    Y = np.arange(N)[None,:]
+    R = ((X-M//2)**2+(Y-N//2)**2)**0.5
+    if len(img.shape)==2:
+        filter = func(R)
+    else:
+        filter = func(R)[None,:,:]
+    if backend=='np':
+        img_f = np.fft.fft2(img)
+        img_filtered = np.fft.ifft2(
+            np.fft.ifftshift(filter, axes=(-2,-1)) * img_f
+        ).real
+    if backend=='torch':
+        img_f = torch.fft.fft2(img)
+        img_filtered = torch.fft.ifft2(
+            torch.fft.ifftshift(filter, dim=(-2,-1)) * img_f
+        ).real
+    return img_filtered
+    
 def threshold_func_test(s_cov_set, fourier_angle=True, axis='all'):
     
     # Initialize the angle operator for the Fourier transform over angles
