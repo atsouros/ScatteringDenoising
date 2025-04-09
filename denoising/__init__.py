@@ -1811,58 +1811,63 @@ def chunk_model(X, st_calc, nchunks, **kwargs):
              'index_for_synthesis':idx, 'for_synthesis':torch.cat(covs_l)}
     return s_cov_set
 
-# a function that prepares the argument "s_cov_func" to be given to the "synthesis" function
-def prepare_threshold_func(
-    s_cov_set, threshold_list, fourier_angle=True, fourier_scale=True, if_iso=False, axis='all', 
-    all_P00=True, all_S1=True):
-
-    # initialize operators on top of 2D scattering
+def threshold_func_test(s_cov_set, fourier_angle=True, axis='all'):
+    
+    # Initialize the angle operator for the Fourier transform over angles
     angle_operator = FourierAngle()
-    scale_operator = FourierScale()
 
-    # the function that computes the final representation
-    def harmonic_transform(s_cov_set, mask=None, output_info=False, if_iso=False):
-        iso_suffix = '_iso' if if_iso else ''
-        # get coefficient vectors and the index vectors
-        coef = s_cov_set['for_synthesis'+iso_suffix]
-        idx = scale_annotation_a_b(to_numpy(s_cov_set['index_for_synthesis'+iso_suffix]).T)
-        # perform FT on angle indexes l1 (and l2, l3, depending on the 'axis' param)
-        if fourier_angle:
-            coef, idx = angle_operator(coef, idx, if_isotropic=if_iso, axis=axis)
-        # perform FT on scale indexes j1 while keeping j1-j2, j2-j3
-        if fourier_scale:
-            coef, idx = scale_operator(coef, idx)
-        # output
-        if output_info:
-            return idx, coef[:, mask] if mask is not None else coef
-        else:
-            return coef[:, mask] if mask is not None else coef
+    # Define the harmonic transform function with the modified mask
+    def harmonic_transform(s_cov_set):
+        # Get coefficient vectors and the index vectors
+        coef = s_cov_set['for_synthesis']
+        idx = scale_annotation_a_b(to_numpy(s_cov_set['index_for_synthesis']).T)
+        
+        # print("\nBefore Thresholding:")
+        # cov_types, counts = np.unique(idx[:, 0], return_counts=True)
+        # for cov_type, count in zip(cov_types, counts):
+        #     print(f"Type: {cov_type}, Count: {count}")
 
-    idx, covs_all = harmonic_transform(s_cov_set, mask=None, output_info=True, if_iso=if_iso)
-    mean = covs_all.mean(0)
-    print(len(covs_all))
-    std = covs_all.std(0) * (len(covs_all) / (len(covs_all)-1))**0.5
-#     std = covs_all.std(0)
-    
-    # compute thresholding mask
-    mask_list = []
-    for threshold in threshold_list:
-        # thresholding coefficients
-        snr_mask = (mean.abs() / std > threshold)
-        # keep the field mean not thresholded
-        snr_mask[(np.array(idx)[:,0]=='mean')] = True
-        # keep all wavelet power spectrum (P00) not thresholded, if the "all_P00" param is True
-        if all_P00:
-            snr_mask[(np.array(idx)[:,0]=='P00')] = True
-        # keep all wavelet L1 norms (S1) not thresholded, if the "all_S1" param is True
-        if all_S1:
-            snr_mask[(np.array(idx)[:,0]=='S1')] = True
-        mask_list.append(snr_mask[None,:])
-    masks = torch.cat(mask_list)
-    
-    threshold_func= lambda s_cov_set, params: harmonic_transform(s_cov_set, mask=params, if_iso=if_iso)
-    
-    return idx, to_numpy(mean), to_numpy(std), threshold_func, to_numpy(masks)
+        # Perform Fourier transform on angle indexes (l1, l2, l3) if enabled
+        coef, idx = angle_operator(coef, idx, axis=axis)
+
+        # Create a mask of the same length as the number of columns in coef
+        mask = torch.zeros((coef.shape[-1],), dtype=torch.bool)
+
+        # Always include non-Fourier types (mean, P00, S1) in the mask
+        non_fourier_mask = np.isin(idx[:, 0], ['mean', 'P00', 'S1'])
+        mask[torch.from_numpy(np.where(non_fourier_mask)[0])] = True
+
+        # Filter only for C01 and C11 types (both real and imaginary)
+        is_c01_c11 = np.isin(idx[:, 0], ['C01re', 'C01im', 'C11re', 'C11im'])
+
+        # Extract relevant angular indices (l1, l2, l3) for these types
+        l1 = idx[is_c01_c11, 4].astype(int)
+        l2 = idx[is_c01_c11, 5].astype(int)
+        l3 = idx[is_c01_c11, 6].astype(int)
+
+        # Find valid indices where l1, l2, l3 are in {0, 1}
+        valid_indices = (l1 <= 1) & (l2 <= 1) & (l3 <= 1)
+
+        # Get the positions of valid coefficients
+        valid_positions = np.where(is_c01_c11)[0][valid_indices]
+
+        # Set the mask to True for these valid positions
+        mask[torch.tensor(valid_positions, dtype=torch.long)] = True
+
+        # print("\nAfter Thresholding:")
+        # idx_after = idx[torch.from_numpy(np.where(mask.numpy())[0])]
+        # cov_types_after, counts_after = np.unique(idx_after[:, 0], return_counts=True)
+        # for cov_type, count in zip(cov_types_after, counts_after):
+        #     print(f"Type: {cov_type}, Count: {count}")
+
+        # Output the transformed coefficients with the valid mask
+        return coef[:, mask] if mask is not None else coef
+
+    # Generate the threshold function that keeps only the first two harmonics
+    threshold_func = lambda s_cov_set: harmonic_transform(s_cov_set)
+
+    # Return the threshold function
+    return threshold_func
 
 
 def convolve_by_FFT(field, func_in_Fourier, device='cpu'):
