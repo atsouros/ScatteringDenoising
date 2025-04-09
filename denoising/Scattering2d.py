@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 import torch.fft
-from scattering.FiltersSet import FiltersSet
+from denoising.FiltersSet import FiltersSet
 
 class Scattering2d(object):
     def __init__(
