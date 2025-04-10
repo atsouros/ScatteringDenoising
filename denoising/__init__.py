@@ -552,6 +552,44 @@ def denoise_general_double(
         image_model.image2.cpu().detach().numpy()
     )
 
+def scale_annotation_a_b(idx_info):
+    """
+    Convert idx_info j1, j1p, j2, l1, l1p, l2
+    into idx_info j1, a, b, l1, l1p, l2.
+
+    :idx_info: K x 6 array
+    """
+    cov_type, j1, j1p, j2, l1, l1p, l2 = idx_info.T
+    admissible_types = {
+        0: 'mean',
+        1: 'P00',
+        2: 'S1',
+        3: 'C01re',
+        4: 'C01im',
+        5: 'C11re',
+        6: 'C11im'
+    }
+    cov_type = np.array([admissible_types[c_type] for c_type in cov_type])
+
+    # create idx_info j1, j1p, a, b, l1, l1p, l2
+    where_c01_c11 = np.isin(cov_type, ['C01re', 'C01im', 'C11re', 'C11im'])
+
+    j1_new = j1.copy()
+    j1p_new = j1p.copy()
+
+    j1_new[where_c01_c11] = j1p[where_c01_c11]
+    j1p_new[where_c01_c11] = j1[where_c01_c11]
+
+    a = (j1_new - j1p_new) * (j1p_new >= 0) - (j1p_new == -1)
+    b = (j1_new - j2) * (j2 >= 0) + (j2 == -1)
+
+    idx_info_a_b = np.array([cov_type, j1_new, a, b, l1, l1p, l2], dtype=object).T
+
+    # idx_info_a_b = np.stack([cov_type, j1_new, a, b, l1, l1p, l2]).T
+
+    return idx_info_a_b
+
+
 def threshold_func_test(s_cov_set, fourier_angle=True, axis='all'):
     
     # Initialize the angle operator for the Fourier transform over angles
