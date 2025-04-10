@@ -105,98 +105,83 @@ Use * or + to connect more than one condition.
     
     return std_func_dual(image1, image_ref1, image2, image_ref2)
 
-
 def compute_std(
-    target, contamination_arr,
-    J=None, L=4, M=None, N=None, l_oversampling=1, frequency_factor=1, s_cov_func = None,
+    targets, contamination_arr,
+    J=None, L=4, M=None, N=None, l_oversampling=1, frequency_factor=1, s_cov_func=None,
     mode='image',
     device='gpu', wavelets='morlet', seed=None,
     if_large_batch=False,
     C11_criteria=None,
     normalization='P00',
-    precision='single', ps_bins=None, ps_bin_type='log', bispectrum_bins=None, bispectrum_bin_type='log',
+    precision='single',
     pseudo_coef=1,
     remove_edge=False
-    ):
-
+):
     '''
-the estimator_name can be 's_mean', 's_mean_iso', 's_cov', 's_cov_iso', 'alpha_cov', 
-the C11_criteria is the condition on j1 and j2 to compute coefficients, in addition to the condition that j2 >= j1. 
-Use * or + to connect more than one condition.
+    targets: tuple of individual (1, M, N) torch tensors or numpy arrays
+    returns: tuple of std vectors (one per target)
     '''
-    if not torch.cuda.is_available(): device='cpu'
+    if not torch.cuda.is_available():
+        device = 'cpu'
     np.random.seed(seed)
     if C11_criteria is None:
         C11_criteria = 'j2>=j1'
-    if mode=='image':
-        _, M, N = target.shape
-        
-    if J is None:
-        J = int(np.log2(min(M,N))) - 1
     
-    # define calculator and estimator function
-    st_calc = Scattering2d(M, N, J, L, device, wavelets, l_oversampling=l_oversampling, frequency_factor=frequency_factor)
-    st_calc.add_ref(ref=target)
+    # Determine shape from first target
+    first = targets[0]
+    first = torch.from_numpy(first) if isinstance(first, np.ndarray) else first
+    _, M, N = first.shape
+    if J is None:
+        J = int(np.log2(min(M, N))) - 1
 
-    func_s = lambda x: st_calc.scattering_cov(
-        x, use_ref=True, if_large_batch=if_large_batch, C11_criteria=C11_criteria, 
-        normalization=normalization, pseudo_coef=pseudo_coef,remove_edge=remove_edge)['for_synthesis']
-            
-    if s_cov_func is None:
-        def func_s(x):
-            return st_calc.scattering_cov(
-                x, use_ref=True, if_large_batch=if_large_batch, C11_criteria=C11_criteria, 
-                normalization=normalization, pseudo_coef=pseudo_coef, remove_edge=remove_edge
-            )['for_synthesis']
-    else:
-        def func_s(x):
-            coeffs =  st_calc.scattering_cov(
-                x, use_ref=True, if_large_batch=if_large_batch, C11_criteria=C11_criteria, 
-                normalization=normalization, pseudo_coef=pseudo_coef, remove_edge=remove_edge
-            )
-            return s_cov_func(coeffs)
+    dtype = torch.double if precision == 'double' else torch.float
+    contamination_tensor = torch.from_numpy(contamination_arr).to(device=device, dtype=dtype)
 
-    def func(image):
-        coef_list = []
-        coef_list.append(func_s(image))        
-        return torch.cat(coef_list, axis=-1)
-                
-    def std_func(x, Mn=10, batch_size=5):
-        # Convert to torch if necessary
-        x = torch.from_numpy(x) if isinstance(x, np.ndarray) else x
+    # Output container
+    std_list = []
 
-        # Set precision and device
-        dtype = torch.double if precision == 'double' else torch.float
+    for target in targets:
+        x = torch.from_numpy(target) if isinstance(target, np.ndarray) else target
         x = x.to(device=device, dtype=dtype)
 
-        contamination_tensor = torch.from_numpy(contamination_arr).to(device=device, dtype=dtype)
+        # New scattering object per target, since add_ref mutates state
+        st_calc = Scattering2d(M, N, J, L, device, wavelets,
+                               l_oversampling=l_oversampling,
+                               frequency_factor=frequency_factor)
+        st_calc.add_ref(ref=x)
 
-        # Compute reference statistics Φ(x)
-        coeffs_ref = func(x).squeeze(0)  # Shape: (N_coeffs,)
-        coeffs_number = coeffs_ref.size(0)
+        if s_cov_func is None:
+            def func_s(x_):
+                return st_calc.scattering_cov(
+                    x_, use_ref=True, if_large_batch=if_large_batch,
+                    C11_criteria=C11_criteria, normalization=normalization,
+                    pseudo_coef=pseudo_coef, remove_edge=remove_edge
+                )['for_synthesis']
+        else:
+            def func_s(x_):
+                coeffs = st_calc.scattering_cov(
+                    x_, use_ref=True, if_large_batch=if_large_batch,
+                    C11_criteria=C11_criteria, normalization=normalization,
+                    pseudo_coef=pseudo_coef, remove_edge=remove_edge
+                )
+                return s_cov_func(coeffs)
 
-        # Prepare batches
-        batch_number = (Mn + batch_size - 1) // batch_size
-        COEFFS = torch.zeros((Mn, coeffs_number), device=device)
+        def std_func(x_single, Mn=10, batch_size=5):
+            coeffs_number = func_s(x_single).size(-1)
+            COEFFS = torch.zeros((Mn, coeffs_number), device=device)
 
-        for i in range(batch_number):
-            start_idx = i * batch_size
-            end_idx = min((i + 1) * batch_size, Mn)
+            for i in range(0, Mn, batch_size):
+                end = min(i + batch_size, Mn)
+                cont_batch = contamination_tensor[i:end]  # (B, 1, M, N)
+                cont_images = x_single.unsqueeze(0) + cont_batch
+                for j in range(cont_images.size(0)):
+                    COEFFS[i + j] = func_s(cont_images[j])
 
-            # Slice batch of contamination
-            cont_batch = contamination_tensor[start_idx:end_idx]  # Shape: (B, 1, H, W)
+            return COEFFS.std(dim=0, unbiased=False)
 
-            # Broadcast and add to x
-            cont_images = x.unsqueeze(0) + cont_batch  # Shape: (B, 1, H, W)
+        std_list.append(std_func(x))
 
-            for j in range(cont_images.size(0)):
-                idx = start_idx + j
-                COEFFS[idx] = func(cont_images[j]).squeeze(0)
-
-        std_dev = COEFFS.std(dim=0, unbiased=False)
-        return std_dev
-    
-    return std_func(target)
+    return tuple(std_list)
 
 def denoise_double(
     target1, target2, contamination_arr, std, std_double = None, image_init1=None,image_init2=None, n_batch = 10, s_cov_func = None,
@@ -589,6 +574,26 @@ def scale_annotation_a_b(idx_info):
 
     return idx_info_a_b
 
+def filter_radial(img, func, backend='np'):
+        M, N = img.shape[-2:]
+        X = np.arange(M)[:,None]
+        Y = np.arange(N)[None,:]
+        R = ((X-M//2)**2+(Y-N//2)**2)**0.5
+        if len(img.shape)==2:
+            filter = func(R)
+        else:
+            filter = func(R)[None,:,:]
+        if backend=='np':
+            img_f = np.fft.fft2(img)
+            img_filtered = np.fft.ifft2(
+                np.fft.ifftshift(filter, axes=(-2,-1)) * img_f
+            ).real
+        if backend=='torch':
+            img_f = torch.fft.fft2(img)
+            img_filtered = torch.fft.ifft2(
+                torch.fft.ifftshift(filter, dim=(-2,-1)) * img_f
+            ).real
+        return img_filtered
 
 def threshold_func_test(s_cov_set, fourier_angle=True, axis='all'):
     
