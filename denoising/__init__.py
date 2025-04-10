@@ -18,11 +18,104 @@ from denoising.AlphaScattering2d_cov import AlphaScattering2d_cov
 from denoising.angle_transforms import FourierAngle
 from denoising.scale_transforms import FourierScale
 
+def compute_std(
+    target, contamination_arr,
+    J=None, L=4, M=None, N=None, l_oversampling=1, frequency_factor=1, s_cov_func = None,
+    mode='image',
+    device='gpu', wavelets='morlet', seed=None,
+    if_large_batch=False,
+    C11_criteria=None,
+    normalization='P00',
+    precision='single', ps_bins=None, ps_bin_type='log', bispectrum_bins=None, bispectrum_bin_type='log',
+    pseudo_coef=1,
+    remove_edge=False
+    ):
+
+    '''
+the estimator_name can be 's_mean', 's_mean_iso', 's_cov', 's_cov_iso', 'alpha_cov', 
+the C11_criteria is the condition on j1 and j2 to compute coefficients, in addition to the condition that j2 >= j1. 
+Use * or + to connect more than one condition.
+    '''
+    if not torch.cuda.is_available(): device='cpu'
+    np.random.seed(seed)
+    if C11_criteria is None:
+        C11_criteria = 'j2>=j1'
+       
+    if isinstance(target, tuple):
+        _, M, N = target[0].shape
+    else:
+        _, M, N = target.shape 
+        
+    if J is None:
+        J = int(np.log2(min(M,N))) - 1
+    
+    # define calculator and estimator function
+    st_calc = Scattering2d(M, N, J, L, device, wavelets, l_oversampling=l_oversampling, frequency_factor=frequency_factor)
+
+    if s_cov_func is None:
+        def func_s(x):
+            return st_calc.scattering_cov(
+                x, use_ref=True, if_large_batch=if_large_batch, C11_criteria=C11_criteria, 
+                normalization=normalization, pseudo_coef=pseudo_coef, remove_edge=remove_edge
+            )['for_synthesis']
+    else:
+        def func_s(x):
+            coeffs =  st_calc.scattering_cov(
+                x, use_ref=True, if_large_batch=if_large_batch, C11_criteria=C11_criteria, 
+                normalization=normalization, pseudo_coef=pseudo_coef, remove_edge=remove_edge
+            )
+            return s_cov_func(coeffs)
+
+    def func(image):
+        coef_list = []
+        coef_list.append(func_s(image))        
+        return torch.cat(coef_list, axis=-1)
+                
+    def std_func(target_tuple, Mn=10, batch_size=5):
+        dtype = torch.double if precision == 'double' else torch.float
+        contamination_tensor = torch.from_numpy(contamination_arr).to(device=device, dtype=dtype)
+
+        std_list = []
+
+        for i, x in enumerate(target_tuple):
+            st_calc.add_ref(ref=x)
+
+            # Convert to torch if necessary
+            x = torch.from_numpy(x) if isinstance(x, np.ndarray) else x
+            x = x.to(device=device, dtype=dtype)
+
+            cont_i = contamination_arr[:, i]  # Shape: (Mn, 1, H, W)
+
+            # Compute reference statistics Φ(x)
+            coeffs_ref = func(x).squeeze(0)  # Shape: (N_coeffs,)
+            coeffs_number = coeffs_ref.size(0)
+
+            # Prepare batches
+            batch_number = (Mn + batch_size - 1) // batch_size
+            COEFFS = torch.zeros((Mn, coeffs_number), device=device)
+
+            for b in range(batch_number):
+                start_idx = b * batch_size
+                end_idx = min((b + 1) * batch_size, Mn)
+
+                cont_batch = cont_i[start_idx:end_idx]  # Shape: (B, 1, H, W)
+                cont_images = x.unsqueeze(0) + cont_batch  # Shape: (B, 1, H, W)
+
+                for j in range(cont_images.size(0)):
+                    idx = start_idx + j
+                    COEFFS[idx] = func(cont_images[j]).squeeze(0)
+
+            std_dev = COEFFS.std(dim=0, unbiased=False)
+            std_list.append(std_dev)
+
+        return tuple(std_list)
+    
+    return std_func(target)
+
 
 def compute_std_double(
-    image1, image2, contamination_arr, image_ref1=None, image_ref2=None,
+    image, contamination_arr, image_ref=None,
     J=None, L=4, M=None, N=None, l_oversampling=1, frequency_factor=1,
-    mode='image',
     device='gpu', wavelets='morlet', seed=None,
     if_large_batch=False,
     C11_criteria=None,
@@ -38,10 +131,12 @@ Use * or + to connect more than one condition.
     if not torch.cuda.is_available(): device='cpu'
     np.random.seed(seed)
     C11_criteria = 'j2>=j1'
-    if mode=='image':
-        _, M, N = image1.shape
+    _, M, N = image[0].shape
     
-    J = int(np.log2(min(M,N))) - 1        
+    J = int(np.log2(min(M,N))) - 1 
+
+    if image_ref is None:
+        image_ref = image       
 
     st_calc = Scattering2d(M, N, J, L, device, wavelets, l_oversampling=l_oversampling, frequency_factor=frequency_factor)
     def func(map1, ref_map1, map2=None, ref_map2=None):
@@ -103,88 +198,10 @@ Use * or + to connect more than one condition.
         std_dev = COEFFS.std(dim=0, unbiased=False)
         return std_dev
     
-    return std_func_dual(image1, image_ref1, image2, image_ref2)
-
-def compute_std(
-    targets, contamination_arr,
-    J=None, L=4, M=None, N=None, l_oversampling=1, frequency_factor=1, s_cov_func=None,
-    mode='image',
-    device='gpu', wavelets='morlet', seed=None,
-    if_large_batch=False,
-    C11_criteria=None,
-    normalization='P00',
-    precision='single',
-    pseudo_coef=1,
-    remove_edge=False
-):
-    '''
-    targets: tuple of individual (1, M, N) torch tensors or numpy arrays
-    returns: tuple of std vectors (one per target)
-    '''
-    if not torch.cuda.is_available():
-        device = 'cpu'
-    np.random.seed(seed)
-    if C11_criteria is None:
-        C11_criteria = 'j2>=j1'
-    
-    # Determine shape from first target
-    first = targets[0]
-    first = torch.from_numpy(first) if isinstance(first, np.ndarray) else first
-    _, M, N = first.shape
-    if J is None:
-        J = int(np.log2(min(M, N))) - 1
-
-    dtype = torch.double if precision == 'double' else torch.float
-    contamination_tensor = torch.from_numpy(contamination_arr).to(device=device, dtype=dtype)
-
-    # Output container
-    std_list = []
-
-    for target in targets:
-        x = torch.from_numpy(target) if isinstance(target, np.ndarray) else target
-        x = x.to(device=device, dtype=dtype)
-
-        # New scattering object per target, since add_ref mutates state
-        st_calc = Scattering2d(M, N, J, L, device, wavelets,
-                               l_oversampling=l_oversampling,
-                               frequency_factor=frequency_factor)
-        st_calc.add_ref(ref=x)
-
-        if s_cov_func is None:
-            def func_s(x_):
-                return st_calc.scattering_cov(
-                    x_, use_ref=True, if_large_batch=if_large_batch,
-                    C11_criteria=C11_criteria, normalization=normalization,
-                    pseudo_coef=pseudo_coef, remove_edge=remove_edge
-                )['for_synthesis']
-        else:
-            def func_s(x_):
-                coeffs = st_calc.scattering_cov(
-                    x_, use_ref=True, if_large_batch=if_large_batch,
-                    C11_criteria=C11_criteria, normalization=normalization,
-                    pseudo_coef=pseudo_coef, remove_edge=remove_edge
-                )
-                return s_cov_func(coeffs)
-
-        def std_func(x_single, Mn=10, batch_size=5):
-            coeffs_number = func_s(x_single).size(-1)
-            COEFFS = torch.zeros((Mn, coeffs_number), device=device)
-
-            for i in range(0, Mn, batch_size):
-                end = min(i + batch_size, Mn)
-                cont_batch = contamination_tensor[i:end]  # (B, 1, M, N)
-                cont_images = x_single.unsqueeze(0) + cont_batch
-                for j in range(cont_images.size(0)):
-                    COEFFS[i + j] = func_s(cont_images[j])
-
-            return COEFFS.std(dim=0, unbiased=False)
-
-        std_list.append(std_func(x))
-
-    return tuple(std_list)
+    return std_func_dual(image[0], image_ref[0], image[1], image_ref[1])
 
 def denoise_double(
-    target1, target2, contamination_arr, std, std_double = None, image_init1=None,image_init2=None, n_batch = 10, s_cov_func = None,
+    target, contamination_arr, std, std_double = None, image_init=None, n_batch = 10, s_cov_func = None,
     J=None, L=4, M=None, N=None, l_oversampling=1, frequency_factor=1,
     mode='image', optim_algorithm='LBFGS', steps=300, learning_rate=0.2,
     device='gpu', wavelets='morlet', seed=None,
@@ -209,64 +226,19 @@ Use * or + to connect more than one condition.
     np.random.seed(seed)
     if C11_criteria is None:
         C11_criteria = 'j2>=j1'
-    if mode=='image':
-        _, M, N = target1.shape
+        
+    if isinstance(target, tuple):
+        _, M, N = target[0].shape
+    else:
+        _, M, N = target.shape 
     
     # set initial point of synthesis
-    if image_init1 is None and image_init2 is None:
-        if mode=='image':
-            if not ensemble:
-                image_init1 = np.random.normal(
-                    target1.mean((-2,-1))[:,None,None],
-                    target1.std((-2,-1))[:,None,None],
-                    (target1.shape[0], M, N)
-                )
-                image_init2 = np.random.normal(
-                    target2.mean((-2,-1))[:,None,None],
-                    target2.std((-2,-1))[:,None,None],
-                    (target2.shape[0], M, N)
-                )
-                
-            else:
-                image_init1 = np.random.normal(
-                    target1.mean(),
-                    target1.std(),
-                    (N_ensemble, M, N)
-                )
-                image_init2 = np.random.normal(
-                    target2.mean(),
-                    target2.std(),
-                    (N_ensemble, M, N)
-                )
-        else:
-            if M is None:
-                print('please assign image size M and N.')
-            if not ensemble: 
-                image_init1 = np.random.normal(0,1,(target1.shape[0],M,N))
-                image_init2 = np.random.normal(0,1,(target2.shape[0],M,N))
-            else: 
-                image_init1 = np.random.normal(0,1,(N_ensemble,M,N))
-                image_init2 = np.random.normal(0,1,(N_ensemble,M,N))
+    if image_init is None:
+        image_init = target
         
     if J is None:
         J = int(np.log2(min(M,N))) - 1
     
-    # power spectrum
-    if ps_bins is None:
-        ps_bins = J-1
-    def func_ps(image):
-        ps, _ = get_power_spectrum(image, bins=ps_bins, bin_type=ps_bin_type)
-        return torch.cat(( (image.mean((-2,-1))/image.std((-2,-1)))[:,None], image.var((-2,-1))[:,None], ps), axis=-1)
-    # bispectrum
-    if bi:
-        if bispectrum_bins is None:
-            bispectrum_bins = J-1
-        bi_calc = Bispectrum_Calculator(M, N, bins=bispectrum_bins, bin_type=bispectrum_bin_type, device=device)
-        def func_bi(image):
-            bi = bi_calc.forward(image)
-            ps, _ = get_power_spectrum(image, bins=bispectrum_bins, bin_type=bispectrum_bin_type)
-            return torch.cat(((image.mean((-2,-1))/image.std((-2,-1)))[:,None], ps, bi), axis=-1)
-
     st_calc = Scattering2d(M, N, J, L, device, wavelets, l_oversampling=l_oversampling, frequency_factor=frequency_factor)
 
     def func(map1, ref_map1, map2=None, ref_map2=None):
@@ -402,7 +374,10 @@ Use * or + to connect more than one condition.
         normalized_diff = diff / std_double[None, :]
         squared_norms = torch.sum(normalized_diff ** 2, dim=-1) / normalized_diff.size(-1)
 
-        return squared_norms.mean()    
+        return squared_norms.mean()   
+
+    target1, target2 = target
+    image_init1, image_init2 = image_init 
 
     image_syn = denoise_general_double(
     target1, target2, image_init1, image_init2, func, BR_loss, 
