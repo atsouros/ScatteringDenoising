@@ -391,11 +391,134 @@ Use * or + to connect more than one condition.
 
     return image_syn
 
+# def denoise_general_double(
+#     target, image_init, estimator_function, loss_function, 
+#     optim_algorithm='LBFGS', steps=100, learning_rate=0.5,
+#     device='gpu', precision='single', print_each_step=False, Fourier=False
+# ):
+    
+#     # Formatting targets and images (to tensor, to CUDA if necessary)
+#     def to_tensor(var):
+#         if isinstance(var, np.ndarray):
+#             var = torch.from_numpy(var)
+#         if precision == 'double':
+#             var = var.type(torch.DoubleTensor)
+#         else:
+#             var = var.type(torch.FloatTensor)
+#         if device == 'gpu':
+#             var = var.cuda()
+#         return var
+    
+#     target1 = to_tensor(target[0])
+#     target2 = to_tensor(target[1])
+#     image_init1 = to_tensor(image_init[0])
+#     image_init2 = to_tensor(image_init[1])
+
+#     # calculate statistics for target images
+#     estimator_single = estimator_function(target1, target1)
+#     estimator_double = estimator_function(target1, target1, target2, target2)
+
+#     print('# of estimators: ', estimator_single.shape[-1] + estimator_double.shape[-1])
+    
+#     # Define optimizable image model
+#     class OptimizableImage(torch.nn.Module):
+#         def __init__(self, input_init1, input_init2, Fourier=False):
+#             super().__init__()
+#             self.param1 = torch.nn.Parameter(input_init1)
+#             self.param2 = torch.nn.Parameter(input_init2)
+            
+#             if Fourier: 
+#                 self.image1 = torch.fft.ifftn(
+#                     self.param1[0] + 1j * self.param1[1],
+#                     dim=(-2, -1)).real
+#                 self.image2 = torch.fft.ifftn(
+#                     self.param2[0] + 1j * self.param2[1],
+#                     dim=(-2, -1)).real
+#             else: 
+#                 self.image1 = self.param1
+#                 self.image2 = self.param2
+    
+#     # Prepare input initialization for Fourier or direct space
+#     if Fourier: 
+#         temp1 = torch.fft.fftn(image_init1, dim=(-2, -1))
+#         temp2 = torch.fft.fftn(image_init2, dim=(-2, -1))
+#         input_init1 = torch.cat((temp1.real[None, ...], temp1.imag[None, ...]), dim=0)
+#         input_init2 = torch.cat((temp2.real[None, ...], temp2.imag[None, ...]), dim=0)
+#     else:
+#         input_init1 = torch.from_numpy(image_init1) if isinstance(image_init1, np.ndarray) else image_init1
+#         input_init2 = torch.from_numpy(image_init2) if isinstance(image_init2, np.ndarray) else image_init2
+
+#     # Ensure inputs are on the correct device and with the correct precision
+#     for var_name, var in [('input_init1', input_init1), ('input_init2', input_init2)]:
+#         if precision == 'double':
+#             var = var.type(torch.DoubleTensor)
+#         else:
+#             var = var.type(torch.FloatTensor)
+#         if device == 'gpu':
+#             var = var.cuda()
+#         globals()[var_name] = var
+
+#     image_model = OptimizableImage(input_init1, input_init2, Fourier)
+        
+#     # Define optimizer for both image parameters
+#     optimizer = torch.optim.LBFGS(
+#         image_model.parameters(), lr=learning_rate, 
+#         max_iter=steps, max_eval=None, 
+#         tolerance_grad=1e-19, tolerance_change=1e-19, 
+#         history_size=min(steps // 2, 150), line_search_fn=None
+#     )
+
+    
+#     # Define closure for LBFGS optimizer
+#     def closure():
+#         optimizer.zero_grad()
+
+#         # Retrieve the synthesized images
+#         synthesized_image1 = image_model.image1
+#         synthesized_image2 = image_model.image2
+
+#         # Compute the estimator function on the synthesized images as a pair
+#         # Compute the loss using the loss function with the correct inputs
+#         loss = 0
+
+#         loss = loss_function(
+#             target1, target2, synthesized_image1, synthesized_image2
+#         )  # Regular case
+
+#         # Check for NaN loss
+#         if torch.isnan(loss):
+#             raise RuntimeError("Loss is NaN! Terminating process..")
+        
+#         # Print progress if required 
+#         if print_each_step:
+#             print(f'Current Loss: {loss.item():.2e}')
+
+#         # Backpropagate the loss
+#         loss.backward()
+#         return loss
+    
+#     # Perform optimization
+#     t_start = time.time()
+#     if optim_algorithm == 'LBFGS':
+#         optimizer.step(closure)
+#     else:
+#         for i in range(steps):
+#             optimizer.step(closure)
+#     t_end = time.time()
+#     print('Time used: ', t_end - t_start, 's')
+
+#     # Return the optimized images as numpy arrays
+#     return (
+#         image_model.image1.cpu().detach().numpy(),
+#         image_model.image2.cpu().detach().numpy()
+#     )
+
 def denoise_general_double(
     target, image_init, estimator_function, loss_function, 
     optim_algorithm='LBFGS', steps=100, learning_rate=0.5,
     device='gpu', precision='single', print_each_step=False
-):    
+):
+    
     # Formatting targets and images (to tensor, to CUDA if necessary)
     def to_tensor(var):
         if isinstance(var, np.ndarray):
