@@ -3,20 +3,17 @@ import os
 dirpath = os.path.dirname(__file__)
 
 import numpy as np
-from pathlib import Path
+# from pathlib import Path
 import time
 import torch
-import matplotlib.pyplot as plt
-import sys
-import camb
+
 
 from denoising.utils import to_numpy
-from denoising.FiltersSet import FiltersSet
+# from denoising.FiltersSet import FiltersSet
 from denoising.Scattering2d import Scattering2d
-from denoising.polyspectra_calculators import get_power_spectrum, Bispectrum_Calculator, Trispectrum_Calculator
-from denoising.AlphaScattering2d_cov import AlphaScattering2d_cov
+# from denoising.polyspectra_calculators import get_power_spectrum, Bispectrum_Calculator, Trispectrum_Calculator
+# from denoising.AlphaScattering2d_cov import AlphaScattering2d_cov
 from denoising.angle_transforms import FourierAngle
-from denoising.scale_transforms import FourierScale
 
 def compute_std(
     target, contamination_arr,
