@@ -637,6 +637,10 @@ class Scattering2d(object):
             
         if self.device=='gpu':
             data = data.cuda()
+
+        if self.device == 'gpu' and self.filters_set.device != data.device:
+            self.filters_set = self.filters_set.to(data.device)
+            
         data_f = torch.fft.fftn(data, dim=(-2,-1))
         
         # initialize tensors for scattering coefficients

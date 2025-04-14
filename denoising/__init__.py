@@ -1,4 +1,3 @@
-#TEST FILE
 import os
 dirpath = os.path.dirname(__file__)
 
@@ -33,7 +32,12 @@ the estimator_name can be 's_mean', 's_mean_iso', 's_cov', 's_cov_iso', 'alpha_c
 the C11_criteria is the condition on j1 and j2 to compute coefficients, in addition to the condition that j2 >= j1. 
 Use * or + to connect more than one condition.
     '''
+
     if not torch.cuda.is_available(): device='cpu'
+
+    if device == 'gpu':
+            contamination_arr = torch.tensor(contamination_arr).cuda()
+
     np.random.seed(seed)
     if C11_criteria is None:
         C11_criteria = 'j2>=j1'
@@ -69,17 +73,21 @@ Use * or + to connect more than one condition.
         return torch.cat(coef_list, axis=-1)
                 
     def std_func(target_tuple, Mn=10, batch_size=5):
+        if device == 'gpu':
+            device_name='cuda'
+        else:
+            device_name=device
+
         dtype = torch.double if precision == 'double' else torch.float
-        contamination_tensor = torch.from_numpy(contamination_arr).to(device=device, dtype=dtype)
 
         std_list = []
 
         for i, x in enumerate(target_tuple):
+            x = torch.from_numpy(x) if isinstance(x, np.ndarray) else x
+            x = x.to(device=device_name, dtype=dtype)
+
             st_calc.add_ref(ref=x)
 
-            # Convert to torch if necessary
-            x = torch.from_numpy(x) if isinstance(x, np.ndarray) else x
-            x = x.to(device=device, dtype=dtype)
 
             cont_i = contamination_arr[:, i]  # Shape: (Mn, 1, H, W)
 
@@ -89,7 +97,7 @@ Use * or + to connect more than one condition.
 
             # Prepare batches
             batch_number = (Mn + batch_size - 1) // batch_size
-            COEFFS = torch.zeros((Mn, coeffs_number), device=device)
+            COEFFS = torch.zeros((Mn, coeffs_number), device=device_name)
 
             for b in range(batch_number):
                 start_idx = b * batch_size
@@ -164,13 +172,12 @@ Use * or + to connect more than one condition.
 
         # Set dtype and device
         dtype = torch.double if precision == 'double' else torch.float
-        x1 = x1.to(device=device, dtype=dtype)
-        x2 = x2.to(device=device, dtype=dtype)
-        ref1 = ref1.to(device)
-        ref2 = ref2.to(device)
-
-        # Validate contamination_arr
-        contamination_tensor = torch.from_numpy(contamination_arr).to(device=device, dtype=dtype)
+        device_torch = torch.device('cuda' if device == 'gpu' else 'cpu')
+        x1 = x1.to(device=device_torch, dtype=dtype)
+        x2 = x2.to(device=device_torch, dtype=dtype)
+        ref1 = ref1.to(device=device_torch, dtype=dtype)
+        ref2 = ref2.to(device=device_torch, dtype=dtype)
+        contamination_tensor = torch.from_numpy(contamination_arr).to(device=device_torch, dtype=dtype)
 
         # Extract contamination for both inputs
         cont1 = contamination_tensor[:, 0]  # Shape: (Mn, 1, H, W)
