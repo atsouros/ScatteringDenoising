@@ -1,1 +1,1 @@
-# ScatteringDenoising
+# Scattering Denoising
