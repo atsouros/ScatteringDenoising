@@ -5,14 +5,12 @@ import numpy as np
 # from pathlib import Path
 import time
 import torch
+import sys
 
 
 from denoising.utils import to_numpy
-# from denoising.FiltersSet import FiltersSet
 from denoising.Scattering2d import Scattering2d
-# from denoising.polyspectra_calculators import get_power_spectrum, Bispectrum_Calculator, Trispectrum_Calculator
-# from denoising.AlphaScattering2d_cov import AlphaScattering2d_cov
-from denoising.angle_transforms import FourierAngle
+from denoising.angle_transforms import FourierAngle, FourierAngleCross
 
 def compute_std(
     target, contamination_arr,
@@ -22,7 +20,7 @@ def compute_std(
     if_large_batch=False,
     C11_criteria=None,
     normalization='P00',
-    precision='single', ps_bins=None, ps_bin_type='log', bispectrum_bins=None, bispectrum_bin_type='log',
+    precision='single',
     pseudo_coef=1,
     remove_edge=False
     ):
@@ -61,11 +59,11 @@ Use * or + to connect more than one condition.
             )['for_synthesis']
     else:
         def func_s(x):
-            coeffs =  st_calc.scattering_cov(
+            coeff_dict =  st_calc.scattering_cov(
                 x, use_ref=True, if_large_batch=if_large_batch, C11_criteria=C11_criteria, 
                 normalization=normalization, pseudo_coef=pseudo_coef, remove_edge=remove_edge
             )
-            return s_cov_func(coeffs)
+            return s_cov_func(coeff_dict)
 
     def func(image):
         coef_list = []
@@ -119,7 +117,7 @@ Use * or + to connect more than one condition.
 
 
 def compute_std_double(
-    image, contamination_arr, image_ref=None,
+    image, contamination_arr, image_ref=None, s_cov_func = None, 
     J=None, L=4, M=None, N=None, l_oversampling=1, frequency_factor=1,
     device='gpu', wavelets='morlet', seed=None,
     if_large_batch=False,
@@ -141,7 +139,24 @@ Use * or + to connect more than one condition.
     J = int(np.log2(min(M,N))) - 1 
 
     if image_ref is None:
-        image_ref = image       
+        image_ref = image  
+
+    if s_cov_func is None: 
+        def func_s(x1, x2):
+                coeff_dict = st_calc.scattering_cov_2fields(
+                    x1, x2, use_ref=True, if_large_batch=if_large_batch, C11_criteria=C11_criteria,
+                    normalization=normalization, remove_edge=remove_edge
+                )
+                # select = ~torch.isin(result['index_for_synthesis'][0], torch.tensor([1, 3, 7, 11, 15, 19]))
+                return coeff_dict['for_synthesis']#[:, select] 
+    else:
+        def func_s(x1, x2):
+                coeff_dict = st_calc.scattering_cov_2fields(
+                    x1, x2, use_ref=True, if_large_batch=if_large_batch, C11_criteria=C11_criteria,
+                    normalization=normalization, remove_edge=remove_edge
+                )
+                return s_cov_func(coeff_dict)
+
 
     st_calc = Scattering2d(M, N, J, L, device, wavelets, l_oversampling=l_oversampling, frequency_factor=frequency_factor)
     def func(map1, ref_map1, map2=None, ref_map2=None):
@@ -149,14 +164,6 @@ Use * or + to connect more than one condition.
 
         # Two-field case
         st_calc.add_ref_ab(ref_a=ref_map1, ref_b=ref_map2)
-
-        def func_s(x1, x2):
-            result = st_calc.scattering_cov_2fields(
-                x1, x2, use_ref=True, if_large_batch=if_large_batch, C11_criteria=C11_criteria,
-                normalization=normalization, remove_edge=remove_edge
-            )
-            select = ~torch.isin(result['index_for_synthesis'][0], torch.tensor([1, 3, 7, 11, 15, 19]))
-            return result['for_synthesis'][:, select]
         
         coef_list.append(func_s(map1, map2))
 
@@ -205,9 +212,8 @@ Use * or + to connect more than one condition.
     return std_func_dual(image[0], image_ref[0], image[1], image_ref[1])
 
 def denoise_double(
-    target, contamination_arr, std, std_double = None, image_init=None, n_batch = 10, s_cov_func = None,
-    J=None, L=4, M=None, N=None, l_oversampling=1, frequency_factor=1,
-    mode='image', optim_algorithm='LBFGS', steps=300, learning_rate=0.2,
+    target, contamination_arr, std, std_double = None, image_init=None, n_batch = 10, s_cov_func = None, s_cov_func_2fields = None,
+    J=None, L=4, M=None, N=None, l_oversampling=1, frequency_factor=1, optim_algorithm='LBFGS', steps=300, learning_rate=0.2,
     device='gpu', wavelets='morlet', seed=None,
     if_large_batch=False,
     C11_criteria=None,
@@ -267,24 +273,25 @@ Use * or + to connect more than one condition.
         else:
             # Two-field case
             st_calc.add_ref_ab(ref_a=ref_map1, ref_b=ref_map2)
-
-            def func_s(x1, x2):
-                result = st_calc.scattering_cov_2fields(
-                    x1, x2, use_ref=True, if_large_batch=if_large_batch, C11_criteria=C11_criteria,
-                    normalization=normalization, remove_edge=remove_edge
-                )
-                select = ~torch.isin(result['index_for_synthesis'][0], torch.tensor([1, 3, 7, 11, 15, 19]))
-                return result['for_synthesis'][:, select]
+            if s_cov_func_2fields is None:
+                def func_s(x1, x2):
+                    coeff_dict = st_calc.scattering_cov_2fields(
+                        x1, x2, use_ref=True, if_large_batch=if_large_batch, C11_criteria=C11_criteria,
+                        normalization=normalization, remove_edge=remove_edge
+                    )
+                    return coeff_dict['for_synthesis']
+            else:
+                def func_s(x1, x2):
+                    coeff_dict = st_calc.scattering_cov_2fields(
+                        x1, x2, use_ref=True, if_large_batch=if_large_batch, C11_criteria=C11_criteria,
+                        normalization=normalization, remove_edge=remove_edge
+                    )
+                    return s_cov_func_2fields(coeff_dict)
+                 
             
             coef_list.append(func_s(map1, map2))
 
         return torch.cat(coef_list, axis=-1)
-
-    # def BR_loss(target1, target2, image1, image2):
-    #     loss1 = BR_loss_single(target1, image1, std[0], contamination_arr[:, 0])
-    #     loss2 = BR_loss_single(target2, image2, std[1], contamination_arr[:, 1])
-    #     loss3 = BR_loss_double(target1, image1, target2, image2, contamination_arr)
-    #     return  (loss1 + loss2 + loss3) / 3
     
     def BR_loss(*args):
         assert len(args) % 2 == 0, "Expecting equal number of targets and images"
@@ -295,7 +302,7 @@ Use * or + to connect more than one condition.
         loss1 = BR_loss_single(targets[0], images[0], std[0], contamination_arr[:, 0])
         loss2 = BR_loss_single(targets[1], images[1], std[1], contamination_arr[:, 1])
         loss3 = BR_loss_double(targets[0], images[0], targets[1], images[1], contamination_arr)
-        
+
         return (loss1 + loss2 + loss3) / 3
 
     def BR_loss_single(target, image, _std, contamination_arr):
@@ -483,7 +490,6 @@ def denoise_general_double(
     print('Time used: ', t_end - t_start, 's')
 
     # Return the optimized images as numpy arrays
-    # Return the optimized images as numpy arrays
     return tuple(img.cpu().detach().numpy() for img in image_model.get_images())
 
 
@@ -524,6 +530,113 @@ def scale_annotation_a_b(idx_info):
 
     return idx_info_a_b
 
+# def scale_annotation_a_b_2fields(idx_info):
+#     """
+#     Convert extended idx_info for 2-field scattering coefficients into a-b scale notation.
+
+#     Input:
+#         idx_info: K x 7 array
+#             Columns: [cov_type_code, j1, j1p, j2, l1, l1p, l2]
+
+#     Output:
+#         idx_info_a_b: K x 7 array
+#             Columns: [cov_type_str, j1, a, b, l1, l1p, l2]
+#     """
+#     cov_type_codes, j1, j1p, j2, l1, l1p, l2 = idx_info.T.astype(object)
+
+#     # Define code mapping based on your setup
+#     cov_type_map = {
+#         0: 'mean',         1: 'P00',        2: 'S1',
+#         7: 'Corr00re',     8: 'Corr00im',
+#         9: 'C01a_re',     10: 'C01a_im',
+#         11: 'C01b_re',    12: 'C01b_im',
+#         13: 'C01ab_re',   14: 'C01ab_im',
+#         15: 'C01ba_re',   16: 'C01ba_im',
+#         17: 'Corr11aa_re', 18: 'Corr11aa_im',
+#         19: 'Corr11bb_re', 20: 'Corr11bb_im',
+#         21: 'Corr11ab_re', 22: 'Corr11ab_im',
+#     }
+
+#     # Map int code to string label
+#     cov_type_strs = np.array([cov_type_map.get(code, f"UNK_{code}") for code in cov_type_codes])
+
+#     # By default, j1 is taken as is. For "C01..." and "Corr11..." types, swap j1 <-> j1p if needed
+#     is_c01_c11 = np.array([
+#     s.startswith('C01') or s.startswith('Corr11') for s in cov_type_strs
+#     ])
+
+#     j1_new = j1.copy()
+#     j1p_new = j1p.copy()
+
+#     j1_new[is_c01_c11] = j1p[is_c01_c11]
+#     j1p_new[is_c01_c11] = j1[is_c01_c11]
+
+#     # Compute a and b
+#     a = (j1_new - j1p_new) * (j1p_new >= 0) - (j1p_new == -1)
+#     b = (j1_new - j2) * (j2 >= 0) + (j2 == -1)
+
+#     idx_info_a_b = np.array([cov_type_strs, j1_new, a, b, l1, l1p, l2], dtype=object).T
+
+#     return idx_info_a_b
+
+def scale_annotation_a_b_2fields(idx_info):
+    """
+    Convert extended idx_info for 2-field scattering coefficients into a-b scale notation.
+
+    Input:
+        idx_info: K x 7 array
+            Columns: [cov_type_code, j1, j1p, j2, l1, l1p, l2]
+
+    Output:
+        idx_info_a_b: K x 7 array
+            Columns: [cov_type_str, j1, a, b, l1, l1p, l2]
+            For non-angular coefficients, l1, l1p, l2 are set to 0 to avoid FFT problems.
+    """
+    cov_type_codes, j1, j1p, j2, l1, l1p, l2 = idx_info.T.astype(object)
+
+    cov_type_map = {
+        0: 'mean',         1: 'P00',        2: 'S1',
+        7: 'Corr00re',     8: 'Corr00im',
+        9: 'C01a_re',     10: 'C01a_im',
+        11: 'C01b_re',    12: 'C01b_im',
+        13: 'C01ab_re',   14: 'C01ab_im',
+        15: 'C01ba_re',   16: 'C01ba_im',
+        17: 'Corr11aa_re', 18: 'Corr11aa_im',
+        19: 'Corr11bb_re', 20: 'Corr11bb_im',
+        21: 'Corr11ab_re', 22: 'Corr11ab_im',
+    }
+
+    cov_type_strs = np.array([cov_type_map.get(code, f"UNK_{code}") for code in cov_type_codes])
+
+    # Flag angular types
+    is_c01_or_c11 = np.array([
+        s.startswith('C01') or s.startswith('Corr11') for s in cov_type_strs
+    ])
+
+    # Swap j1 <-> j1p for these
+    j1_new = j1.copy()
+    j1p_new = j1p.copy()
+    j1_new[is_c01_or_c11] = j1p[is_c01_or_c11]
+    j1p_new[is_c01_or_c11] = j1[is_c01_or_c11]
+
+    # Compute a, b
+    a = (j1_new - j1p_new) * (j1p_new >= 0) - (j1p_new == -1)
+    b = (j1_new - j2) * (j2 >= 0) + (j2 == -1)
+
+    # Only keep angular indices if needed
+    l1_out = np.zeros_like(l1)
+    l1p_out = np.zeros_like(l1p)
+    l2_out = np.zeros_like(l2)
+
+    l1_out[is_c01_or_c11] = l1[is_c01_or_c11]
+    l1p_out[is_c01_or_c11] = l1p[is_c01_or_c11]
+    l2_out[is_c01_or_c11] = l2[is_c01_or_c11]
+
+    # Construct final output (all columns present, safe values for non-angular types)
+    idx_info_a_b = np.array([cov_type_strs, j1_new, a, b, l1_out, l1p_out, l2_out], dtype=object).T
+
+    return idx_info_a_b
+
 def filter_radial(img, func, backend='np'):
         M, N = img.shape[-2:]
         X = np.arange(M)[:,None]
@@ -545,24 +658,22 @@ def filter_radial(img, func, backend='np'):
             ).real
         return img_filtered
 
-def threshold_func_test(s_cov_set, fourier_angle=True, axis='all'):
+def threshold_func(s_cov_set, fourier_angle=True, axis='all', two_fields = False):
     
     # Initialize the angle operator for the Fourier transform over angles
     angle_operator = FourierAngle()
+    angle_operator_2fields = FourierAngleCross()
 
     # Define the harmonic transform function with the modified mask
     def harmonic_transform(s_cov_set):
         # Get coefficient vectors and the index vectors
         coef = s_cov_set['for_synthesis']
-        idx = scale_annotation_a_b(to_numpy(s_cov_set['index_for_synthesis']).T)
-        
-        # print("\nBefore Thresholding:")
-        # cov_types, counts = np.unique(idx[:, 0], return_counts=True)
-        # for cov_type, count in zip(cov_types, counts):
-        #     print(f"Type: {cov_type}, Count: {count}")
-
-        # Perform Fourier transform on angle indexes (l1, l2, l3) if enabled
-        coef, idx = angle_operator(coef, idx, axis=axis)
+        if not two_fields:
+            idx = scale_annotation_a_b(to_numpy(s_cov_set['index_for_synthesis']).T)
+            coef, idx = angle_operator(coef, idx, axis=axis)
+        else:
+            idx = scale_annotation_a_b_2fields(to_numpy(s_cov_set['index_for_synthesis']).T)
+            coef, idx = angle_operator_2fields(coef, idx, axis=axis)
 
         # Create a mask of the same length as the number of columns in coef
         mask = torch.zeros((coef.shape[-1],), dtype=torch.bool)
@@ -586,13 +697,7 @@ def threshold_func_test(s_cov_set, fourier_angle=True, axis='all'):
         valid_positions = np.where(is_c01_c11)[0][valid_indices]
 
         # Set the mask to True for these valid positions
-        mask[torch.tensor(valid_positions, dtype=torch.long)] = True
-
-        # print("\nAfter Thresholding:")
-        # idx_after = idx[torch.from_numpy(np.where(mask.numpy())[0])]
-        # cov_types_after, counts_after = np.unique(idx_after[:, 0], return_counts=True)
-        # for cov_type, count in zip(cov_types_after, counts_after):
-        #     print(f"Type: {cov_type}, Count: {count}")
+        mask[torch.tensor(valid_positions, dtype=torch.long)] = True 
 
         # Output the transformed coefficients with the valid mask
         return coef[:, mask] if mask is not None else coef
