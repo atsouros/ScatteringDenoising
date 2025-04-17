@@ -1,22 +1,15 @@
-#TEST FILE
 import os
 dirpath = os.path.dirname(__file__)
 
 import numpy as np
-from pathlib import Path
+# from pathlib import Path
 import time
 import torch
-import matplotlib.pyplot as plt
-import sys
-import camb
+
 
 from denoising.utils import to_numpy
-from denoising.FiltersSet import FiltersSet
 from denoising.Scattering2d import Scattering2d
-from denoising.polyspectra_calculators import get_power_spectrum, Bispectrum_Calculator, Trispectrum_Calculator
-from denoising.AlphaScattering2d_cov import AlphaScattering2d_cov
 from denoising.angle_transforms import FourierAngle
-from denoising.scale_transforms import FourierScale
 
 def compute_std(
     target, contamination_arr,
@@ -36,7 +29,12 @@ the estimator_name can be 's_mean', 's_mean_iso', 's_cov', 's_cov_iso', 'alpha_c
 the C11_criteria is the condition on j1 and j2 to compute coefficients, in addition to the condition that j2 >= j1. 
 Use * or + to connect more than one condition.
     '''
+
     if not torch.cuda.is_available(): device='cpu'
+
+    if device == 'gpu':
+            contamination_arr = torch.tensor(contamination_arr).cuda()
+
     np.random.seed(seed)
     if C11_criteria is None:
         C11_criteria = 'j2>=j1'
@@ -72,17 +70,21 @@ Use * or + to connect more than one condition.
         return torch.cat(coef_list, axis=-1)
                 
     def std_func(target_tuple, Mn=10, batch_size=5):
+        if device == 'gpu':
+            device_name='cuda'
+        else:
+            device_name=device
+
         dtype = torch.double if precision == 'double' else torch.float
-        contamination_tensor = torch.from_numpy(contamination_arr).to(device=device, dtype=dtype)
 
         std_list = []
 
         for i, x in enumerate(target_tuple):
+            x = torch.from_numpy(x) if isinstance(x, np.ndarray) else x
+            x = x.to(device=device_name, dtype=dtype)
+
             st_calc.add_ref(ref=x)
 
-            # Convert to torch if necessary
-            x = torch.from_numpy(x) if isinstance(x, np.ndarray) else x
-            x = x.to(device=device, dtype=dtype)
 
             cont_i = contamination_arr[:, i]  # Shape: (Mn, 1, H, W)
 
@@ -92,7 +94,7 @@ Use * or + to connect more than one condition.
 
             # Prepare batches
             batch_number = (Mn + batch_size - 1) // batch_size
-            COEFFS = torch.zeros((Mn, coeffs_number), device=device)
+            COEFFS = torch.zeros((Mn, coeffs_number), device=device_name)
 
             for b in range(batch_number):
                 start_idx = b * batch_size
@@ -167,13 +169,12 @@ Use * or + to connect more than one condition.
 
         # Set dtype and device
         dtype = torch.double if precision == 'double' else torch.float
-        x1 = x1.to(device=device, dtype=dtype)
-        x2 = x2.to(device=device, dtype=dtype)
-        ref1 = ref1.to(device)
-        ref2 = ref2.to(device)
-
-        # Validate contamination_arr
-        contamination_tensor = torch.from_numpy(contamination_arr).to(device=device, dtype=dtype)
+        device_torch = torch.device('cuda' if device == 'gpu' else 'cpu')
+        x1 = x1.to(device=device_torch, dtype=dtype)
+        x2 = x2.to(device=device_torch, dtype=dtype)
+        ref1 = ref1.to(device=device_torch, dtype=dtype)
+        ref2 = ref2.to(device=device_torch, dtype=dtype)
+        contamination_tensor = torch.from_numpy(contamination_arr).to(device=device_torch, dtype=dtype)
 
         # Extract contamination for both inputs
         cont1 = contamination_tensor[:, 0]  # Shape: (Mn, 1, H, W)
@@ -391,134 +392,11 @@ Use * or + to connect more than one condition.
 
     return image_syn
 
-# def denoise_general_double(
-#     target, image_init, estimator_function, loss_function, 
-#     optim_algorithm='LBFGS', steps=100, learning_rate=0.5,
-#     device='gpu', precision='single', print_each_step=False, Fourier=False
-# ):
-    
-#     # Formatting targets and images (to tensor, to CUDA if necessary)
-#     def to_tensor(var):
-#         if isinstance(var, np.ndarray):
-#             var = torch.from_numpy(var)
-#         if precision == 'double':
-#             var = var.type(torch.DoubleTensor)
-#         else:
-#             var = var.type(torch.FloatTensor)
-#         if device == 'gpu':
-#             var = var.cuda()
-#         return var
-    
-#     target1 = to_tensor(target[0])
-#     target2 = to_tensor(target[1])
-#     image_init1 = to_tensor(image_init[0])
-#     image_init2 = to_tensor(image_init[1])
-
-#     # calculate statistics for target images
-#     estimator_single = estimator_function(target1, target1)
-#     estimator_double = estimator_function(target1, target1, target2, target2)
-
-#     print('# of estimators: ', estimator_single.shape[-1] + estimator_double.shape[-1])
-    
-#     # Define optimizable image model
-#     class OptimizableImage(torch.nn.Module):
-#         def __init__(self, input_init1, input_init2, Fourier=False):
-#             super().__init__()
-#             self.param1 = torch.nn.Parameter(input_init1)
-#             self.param2 = torch.nn.Parameter(input_init2)
-            
-#             if Fourier: 
-#                 self.image1 = torch.fft.ifftn(
-#                     self.param1[0] + 1j * self.param1[1],
-#                     dim=(-2, -1)).real
-#                 self.image2 = torch.fft.ifftn(
-#                     self.param2[0] + 1j * self.param2[1],
-#                     dim=(-2, -1)).real
-#             else: 
-#                 self.image1 = self.param1
-#                 self.image2 = self.param2
-    
-#     # Prepare input initialization for Fourier or direct space
-#     if Fourier: 
-#         temp1 = torch.fft.fftn(image_init1, dim=(-2, -1))
-#         temp2 = torch.fft.fftn(image_init2, dim=(-2, -1))
-#         input_init1 = torch.cat((temp1.real[None, ...], temp1.imag[None, ...]), dim=0)
-#         input_init2 = torch.cat((temp2.real[None, ...], temp2.imag[None, ...]), dim=0)
-#     else:
-#         input_init1 = torch.from_numpy(image_init1) if isinstance(image_init1, np.ndarray) else image_init1
-#         input_init2 = torch.from_numpy(image_init2) if isinstance(image_init2, np.ndarray) else image_init2
-
-#     # Ensure inputs are on the correct device and with the correct precision
-#     for var_name, var in [('input_init1', input_init1), ('input_init2', input_init2)]:
-#         if precision == 'double':
-#             var = var.type(torch.DoubleTensor)
-#         else:
-#             var = var.type(torch.FloatTensor)
-#         if device == 'gpu':
-#             var = var.cuda()
-#         globals()[var_name] = var
-
-#     image_model = OptimizableImage(input_init1, input_init2, Fourier)
-        
-#     # Define optimizer for both image parameters
-#     optimizer = torch.optim.LBFGS(
-#         image_model.parameters(), lr=learning_rate, 
-#         max_iter=steps, max_eval=None, 
-#         tolerance_grad=1e-19, tolerance_change=1e-19, 
-#         history_size=min(steps // 2, 150), line_search_fn=None
-#     )
-
-    
-#     # Define closure for LBFGS optimizer
-#     def closure():
-#         optimizer.zero_grad()
-
-#         # Retrieve the synthesized images
-#         synthesized_image1 = image_model.image1
-#         synthesized_image2 = image_model.image2
-
-#         # Compute the estimator function on the synthesized images as a pair
-#         # Compute the loss using the loss function with the correct inputs
-#         loss = 0
-
-#         loss = loss_function(
-#             target1, target2, synthesized_image1, synthesized_image2
-#         )  # Regular case
-
-#         # Check for NaN loss
-#         if torch.isnan(loss):
-#             raise RuntimeError("Loss is NaN! Terminating process..")
-        
-#         # Print progress if required 
-#         if print_each_step:
-#             print(f'Current Loss: {loss.item():.2e}')
-
-#         # Backpropagate the loss
-#         loss.backward()
-#         return loss
-    
-#     # Perform optimization
-#     t_start = time.time()
-#     if optim_algorithm == 'LBFGS':
-#         optimizer.step(closure)
-#     else:
-#         for i in range(steps):
-#             optimizer.step(closure)
-#     t_end = time.time()
-#     print('Time used: ', t_end - t_start, 's')
-
-#     # Return the optimized images as numpy arrays
-#     return (
-#         image_model.image1.cpu().detach().numpy(),
-#         image_model.image2.cpu().detach().numpy()
-#     )
-
 def denoise_general_double(
     target, image_init, estimator_function, loss_function, 
     optim_algorithm='LBFGS', steps=100, learning_rate=0.5,
     device='gpu', precision='single', print_each_step=False
-):
-    
+):    
     # Formatting targets and images (to tensor, to CUDA if necessary)
     def to_tensor(var):
         if isinstance(var, np.ndarray):
