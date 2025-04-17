@@ -662,7 +662,7 @@ def threshold_func(s_cov_set, fourier_angle=True, axis='all', two_fields = False
     
     # Initialize the angle operator for the Fourier transform over angles
     angle_operator = FourierAngle()
-    angle_operator_2fields = FourierAngleCross()
+    angle_operator_cross = FourierAngleCross()
 
     # Define the harmonic transform function with the modified mask
     def harmonic_transform(s_cov_set):
@@ -673,7 +673,7 @@ def threshold_func(s_cov_set, fourier_angle=True, axis='all', two_fields = False
             coef, idx = angle_operator(coef, idx, axis=axis)
         else:
             idx = scale_annotation_a_b_2fields(to_numpy(s_cov_set['index_for_synthesis']).T)
-            coef, idx = angle_operator_2fields(coef, idx, axis=axis)
+            coef, idx = angle_operator_cross(coef, idx, axis=axis)
 
         # Create a mask of the same length as the number of columns in coef
         mask = torch.zeros((coef.shape[-1],), dtype=torch.bool)
