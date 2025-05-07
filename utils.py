@@ -187,6 +187,44 @@ def modified_blackbody(N_H, T_d, nu, nu0=353e9, sigma_nu0=7.1e-27, beta=1.53):
 
     return I_nu_μK.value  # Return as a NumPy array
 
+def MBB_factor(T_d, nu, nu0=353e9, sigma_nu0=7.1e-27, beta=1.53):
+    """
+    Computes the factor of the modified blackbody spectrum.
+
+    Parameters:
+    - T_d : float
+        Constant dust temperature (in K).
+    - nu : float
+        Observed frequency (in Hz).
+    - nu0 : float, optional
+        Reference frequency (default: 353 GHz).
+    - sigma_nu0 : float, optional
+        Mean dust opacity at reference frequency (default: 7.1e-27 cm^2 per H at 353 GHz, Planck XVII).
+    - beta : float, optional
+        Dust emissivity spectral index (default: 1.53, Planck XVII).
+
+    Returns:
+    - I_nu_μK : 2D numpy array
+        Observed intensity map converted to μK_CMB.
+    """
+    # Compute frequency-dependent dust opacity
+    sigma_nu = sigma_nu0 * (nu / nu0) ** beta
+
+    # Compute the Planck function using numerically stable expm1
+    x = h * nu / (k * T_d)
+    B_nu = (2 * h * nu**3 / c**2) / np.expm1(x)
+
+    # Compute intensity map in W·m^-2·Hz^-1·sr^-1
+    I_nu = sigma_nu * B_nu  
+
+    # Convert to MJy/sr
+    I_nu_MJy = I_nu * 1e20 * u.MJy / u.sr  
+
+    # Convert to μK_CMB
+    I_nu_μK = I_nu_MJy.to(u.K, equivalencies=u.brightness_temperature(nu * u.Hz)) * 1e6
+
+    return I_nu_μK.value  # Return as a NumPy array
+
 def downsample_by_four(image):
     """
     Downsamples a NumPy image by applying a Gaussian filter and averaging 
