@@ -11,11 +11,11 @@ import sys
 from denoising.utils import to_numpy
 from denoising.Scattering2d import Scattering2d
 from denoising.angle_transforms import FourierAngle, FourierAngleCross
+from utils import MBB_factor
 
 def compute_std(
     target, contamination_arr,
     J=None, L=4, M=None, N=None, l_oversampling=1, frequency_factor=1, s_cov_func = None,
-    mode='image',
     device='gpu', wavelets='morlet', seed=None,
     if_large_batch=False,
     C11_criteria=None,
@@ -211,8 +211,8 @@ Use * or + to connect more than one condition.
     
     return std_func_dual(image[0], image_ref[0], image[1], image_ref[1])
 
-def denoise_double(
-    target, contamination_arr, std, std_double = None, image_init=None, n_batch = 10, s_cov_func = None, s_cov_func_2fields = None,
+def denoise(
+    target, contamination_arr, std, std_double = None, image_init = None, n_batch = 10, s_cov_func = None, s_cov_func_2fields = None,
     J=None, L=4, M=None, N=None, l_oversampling=1, frequency_factor=1, optim_algorithm='LBFGS', steps=300, learning_rate=0.2,
     device='gpu', wavelets='morlet', seed=None,
     if_large_batch=False,
@@ -293,19 +293,39 @@ Use * or + to connect more than one condition.
 
         return torch.cat(coef_list, axis=-1)
     
-    def BR_loss(*args):
-        assert len(args) % 2 == 0, "Expecting equal number of targets and images"
-        mid = len(args) // 2
-        targets = args[:mid]
-        images = args[mid:]
+    # def loss_func(*args):
+    #     assert len(args) % 2 == 0, "Expecting equal number of targets and images"
+    #     mid = len(args) // 2
+    #     targets = args[:mid]
+    #     images = args[mid:]
 
-        loss1 = BR_loss_single(targets[0], images[0], std[0], contamination_arr[:, 0])
-        loss2 = BR_loss_single(targets[1], images[1], std[1], contamination_arr[:, 1])
-        loss3 = BR_loss_double(targets[0], images[0], targets[1], images[1], contamination_arr)
+        # loss1 = loss_func_single(targets[0], images[0], std[0], contamination_arr[:, 0])
+        # loss2 = loss_func_single(targets[1], images[1], std[1], contamination_arr[:, 1])
+        # loss3 = loss_func_double(targets[0], images[0], targets[1], images[1], contamination_arr)
+
+    #     return (loss1 + loss2 + loss3) / 3
+
+    def loss_func(*args):
+        *targets, image = args
+
+        T_d = 10
+        nu = (217, 353)
+
+        # Compute correct (unnormalized) scaling factors
+        f1 = image.new_tensor(MBB_factor(T_d, nu[0] * 1e9))
+        f2 = image.new_tensor(MBB_factor(T_d, nu[1] * 1e9))
+
+        # Scale the shared image to create frequency-specific versions
+        images = (image * f1 * 1e20, image * f2 * 1e20)
+
+        # Compute loss
+        loss1 = loss_func_single(targets[0], images[0], std[0], contamination_arr[:, 0])
+        loss2 = loss_func_single(targets[1], images[1], std[1], contamination_arr[:, 1])
+        loss3 = loss_func_double(targets[0], images[0], targets[1], images[1], contamination_arr)
 
         return (loss1 + loss2 + loss3) / 3
 
-    def BR_loss_single(target, image, _std, contamination_arr):
+    def loss_func_single(target, image, _std, contamination_arr):
         indices = np.random.choice(contamination_arr.shape[0], size=n_batch, replace=False)
         contamination_arr = contamination_arr[indices]
         # Convert to torch if needed
@@ -337,7 +357,7 @@ Use * or + to connect more than one condition.
 
         return squared_norms.mean()
     
-    def BR_loss_double(target1, image1, target2, image2, contamination_arr):
+    def loss_func_double(target1, image1, target2, image2, contamination_arr):
         """
         Computes the BR loss for dual-input using precomputed contamination.
 
@@ -394,15 +414,15 @@ Use * or + to connect more than one condition.
 
         return squared_norms.mean()   
 
-    image_syn = denoise_general_double(
-    target, image_init, func, BR_loss,  
+    image_syn = denoise_general(
+    target, image_init, func, loss_func,  
     optim_algorithm=optim_algorithm, steps=steps, learning_rate=learning_rate,
     device=device, precision=precision, print_each_step=print_each_step
     )
 
     return image_syn
 
-def denoise_general_double(
+def denoise_general(
     target, image_init, estimator_function, loss_function, 
     optim_algorithm='LBFGS', steps=100, learning_rate=0.5,
     device='gpu', precision='single', print_each_step=False
@@ -477,6 +497,10 @@ def denoise_general_double(
 
         # Backpropagate the loss
         loss.backward()
+
+        for p in image_model.parameters():
+            print('Grad mean:', p.grad.abs().mean().item())
+
         return loss
     
     # Perform optimization
