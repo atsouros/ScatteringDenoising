@@ -293,37 +293,37 @@ Use * or + to connect more than one condition.
 
         return torch.cat(coef_list, axis=-1)
     
-    # def loss_func(*args):
-    #     assert len(args) % 2 == 0, "Expecting equal number of targets and images"
-    #     mid = len(args) // 2
-    #     targets = args[:mid]
-    #     images = args[mid:]
-
-        # loss1 = loss_func_single(targets[0], images[0], std[0], contamination_arr[:, 0])
-        # loss2 = loss_func_single(targets[1], images[1], std[1], contamination_arr[:, 1])
-        # loss3 = loss_func_double(targets[0], images[0], targets[1], images[1], contamination_arr)
-
-    #     return (loss1 + loss2 + loss3) / 3
-
     def loss_func(*args):
-        *targets, image = args
+        assert len(args) % 2 == 0, "Expecting equal number of targets and images"
+        mid = len(args) // 2
+        targets = args[:mid]
+        images = args[mid:]
 
-        T_d = 10
-        nu = (217, 353)
-
-        # Compute correct (unnormalized) scaling factors
-        f1 = image.new_tensor(MBB_factor(T_d, nu[0] * 1e9))
-        f2 = image.new_tensor(MBB_factor(T_d, nu[1] * 1e9))
-
-        # Scale the shared image to create frequency-specific versions
-        images = (image * f1 * 1e20, image * f2 * 1e20)
-
-        # Compute loss
         loss1 = loss_func_single(targets[0], images[0], std[0], contamination_arr[:, 0])
         loss2 = loss_func_single(targets[1], images[1], std[1], contamination_arr[:, 1])
         loss3 = loss_func_double(targets[0], images[0], targets[1], images[1], contamination_arr)
 
         return (loss1 + loss2 + loss3) / 3
+
+    # def loss_func(*args):
+    #     *targets, image = args
+
+    #     T_d = 10
+    #     nu = (217, 353)
+
+    #     # Compute correct (unnormalized) scaling factors
+    #     f1 = image.new_tensor(MBB_factor(T_d, nu[0] * 1e9))
+    #     f2 = image.new_tensor(MBB_factor(T_d, nu[1] * 1e9))
+
+    #     # Scale the shared image to create frequency-specific versions
+    #     images = (image * f1 * 1e20, image * f2 * 1e20)
+
+    #     # Compute loss
+    #     loss1 = loss_func_single(targets[0], images[0], std[0], contamination_arr[:, 0])
+    #     loss2 = loss_func_single(targets[1], images[1], std[1], contamination_arr[:, 1])
+    #     loss3 = loss_func_double(targets[0], images[0], targets[1], images[1], contamination_arr)
+
+    #     return (loss1 + loss2 + loss3) / 3
 
     def loss_func_single(target, image, _std, contamination_arr):
         indices = np.random.choice(contamination_arr.shape[0], size=n_batch, replace=False)
