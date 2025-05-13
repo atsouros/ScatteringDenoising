@@ -497,10 +497,7 @@ def denoise_general(
 
         # Backpropagate the loss
         loss.backward()
-
-        for p in image_model.parameters():
-            print('Grad mean:', p.grad.abs().mean().item())
-
+        
         return loss
     
     # Perform optimization
