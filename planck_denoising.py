@@ -13,7 +13,6 @@ import glob
 # Define patch number
 patch = "166"
 
-
 base_path = f"/obs/atsouros/ScatteringDenoising/planck_data/BK_CMB_S4_north_patch/"
 
 # Find the file using a wildcard
