@@ -447,15 +447,12 @@ Use * or + to connect more than one condition.
 
         # Step 1: Compute reference statistics
         target_stats = func(target, target).squeeze(0)  # Shape: (N_coeffs,)
-        
+
         # Step 2: Add contamination
         cont_images = image.unsqueeze(0) + contamination_tensor  # (n_realizations, 1, H, W)
 
-        # Step 3: Compute noisy statistics
-        noisy_stats_tensor = torch.stack(
-            [func(cont_images[i], target) for i in range(n_realizations)],
-            dim=0
-        )  # Shape: (n_realizations, N_coeffs)
+        # Step 3: Compute noisy statistics in a batched way
+        noisy_stats_tensor = func(cont_images[:, 0], target)  # Shape: (n_realizations, N_coeffs)
 
         # Step 4: Normalize and compute squared norm
         diff = noisy_stats_tensor - target_stats[None, :]
@@ -483,21 +480,17 @@ Use * or + to connect more than one condition.
             Scalar loss value.
         """
 
-        # Randomly choose 10 unique indices from the first dimension
         indices = np.random.choice(contamination_arr.shape[0], size=n_batch, replace=False)
         contamination_arr = contamination_arr[indices]
 
-        # Convert if needed
         if isinstance(contamination_arr, np.ndarray):
             contamination_arr = torch.from_numpy(contamination_arr)
 
         n_realizations = contamination_arr.shape[0]
 
-        # Move to device with correct dtype
         dtype = torch.double if precision == 'double' else torch.float
         contamination_tensor = contamination_arr.to(device=image1.device, dtype=dtype)
 
-        # Split contamination per channel
         cont1 = contamination_tensor[:, 0]  # (n_realizations, 1, H, W)
         cont2 = contamination_tensor[:, 1]  # (n_realizations, 1, H, W)
 
@@ -505,21 +498,20 @@ Use * or + to connect more than one condition.
         target_stats = func(target1, target1, target2, target2).squeeze(0)  # (N_coeffs,)
 
         # Step 2: Add contamination
-        cont_images1 = image1.unsqueeze(0) + cont1
-        cont_images2 = image2.unsqueeze(0) + cont2
+        cont_images1 = image1.unsqueeze(0) + cont1  # (n_realizations, 1, H, W)
+        cont_images2 = image2.unsqueeze(0) + cont2  # (n_realizations, 1, H, W)
 
-        # Step 3: Compute stats
-        noisy_stats_tensor = torch.stack([
-            func(cont_images1[i], target1, cont_images2[i], target2)
-            for i in range(n_realizations)
-        ], dim=0)  # (n_realizations, N_coeffs)
+        # Step 3: Compute noisy statistics in batched mode
+        # Assume func supports batched inputs: (B, 1, H, W), (1, H, W), (B, 1, H, W), (1, H, W)
+        # Output: (B, N_coeffs)
+        noisy_stats_tensor = func(cont_images1[:, 0], target1, cont_images2[:, 0], target2)  # (n_realizations, N_coeffs)
 
         # Step 4: Normalize and compute loss
         diff = noisy_stats_tensor - target_stats[None, :]
         normalized_diff = diff / std_double[None, :]
         squared_norms = torch.sum(normalized_diff ** 2, dim=-1) / normalized_diff.size(-1)
 
-        return squared_norms.mean()   
+        return squared_norms.mean()
 
     image_syn = denoise_general(
     target, image_init, func, loss_func,  
