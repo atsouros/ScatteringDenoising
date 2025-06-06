@@ -78,7 +78,7 @@ n_epochs = 4 #number of epochs
 for i in range(n_epochs):
     print(f'Starting epoch {i+1}')
     running_map = denoising.denoise(image_target, contamination_arr = contamination_arr, fixed_img=signal_I, std = std, seed=0, print_each_step=True, 
-                                    steps = 25, n_batch = 25, s_cov_func=threshold_func, image_init = image_init, remove_edge=remove_edge, precision='double', 
+                                    steps = 35, n_batch = 25, s_cov_func=threshold_func, image_init = image_init, remove_edge=remove_edge, precision='double', 
                                     if_large_batch=False, epochNo = i)
     running_map = (running_map[0], running_map[1])
     image_init = running_map

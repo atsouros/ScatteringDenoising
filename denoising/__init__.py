@@ -471,7 +471,7 @@ def denoise(
             coef_list.append(func_s(map1, map2))
 
         return torch.cat(coef_list, axis=-1)
-    
+        
     def loss_func(*args):
         assert len(args) % 2 == 0, "Expecting equal number of targets and images"
         mid = len(args) // 2

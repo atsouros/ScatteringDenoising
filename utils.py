@@ -245,7 +245,7 @@ def downsample_by_four(image):
         raise ValueError("Image dimensions must be even for 2x2 downsampling.")
 
     # Apply Gaussian filter with sigma=1 (approximately matches the 2x2 block size)
-    image = gaussian_filter(image, sigma=1)
+    # image = gaussian_filter(image, sigma=1)
 
     # Downsample by averaging over 2x2 blocks
     if image.ndim == 2:  # Grayscale
