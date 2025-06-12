@@ -1,7 +1,7 @@
 import numpy as np
+import torch
 
 import denoising
-import importlib
 import utils
 
 
@@ -59,8 +59,8 @@ threshold_func = None
 remove_edge = True
 
 std = {
-    'single': denoising.compute_std(image_target, contamination_arr=contamination_arr,
-                                    s_cov_func=threshold_func, remove_edge=remove_edge, precision='double'),
+    # 'single': denoising.compute_std(image_target, contamination_arr=contamination_arr,
+    #                                 s_cov_func=threshold_func, remove_edge=remove_edge, precision='double'),
 
     'partial': denoising.compute_std_partial(image_target, contamination_arr, signal_I,
                                            remove_edge=remove_edge, precision='double'),                               
@@ -78,14 +78,15 @@ n_epochs = 4 #number of epochs
 for i in range(n_epochs):
     print(f'Starting epoch {i+1}')
     running_map = denoising.denoise(image_target, contamination_arr = contamination_arr, fixed_img=signal_I, std = std, seed=0, print_each_step=True, 
-                                    steps = 35, n_batch = 25, s_cov_func=threshold_func, image_init = image_init, remove_edge=remove_edge, precision='double', 
+                                    steps = 25, n_batch = 25, s_cov_func=threshold_func, image_init = image_init, remove_edge=remove_edge, precision='double', 
                                     if_large_batch=False, epochNo = i)
     running_map = (running_map[0], running_map[1])
     image_init = running_map
+    torch.cuda.empty_cache()
 
     std = {
-    'single': denoising.compute_std(running_map, contamination_arr=contamination_arr,
-                                    s_cov_func=threshold_func, remove_edge=remove_edge, precision='double'),
+    # 'single': denoising.compute_std(running_map, contamination_arr=contamination_arr,
+    #                                 s_cov_func=threshold_func, remove_edge=remove_edge, precision='double'),
 
     'partial': denoising.compute_std_partial(running_map, contamination_arr, signal_I,
                                            remove_edge=remove_edge, precision='double'),                               
@@ -103,4 +104,4 @@ image_syn_U = running_map[1]
 image_denoised = np.stack([image_syn_Q[0], image_syn_U[0]])  # Ensure it's an array
 
 # Save results
-np.save(f"image_denoised_patch_{patch}_2.npy", image_denoised)
+np.save(f"image_denoised_patch_{patch}_test.npy", image_denoised)

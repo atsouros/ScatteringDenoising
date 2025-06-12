@@ -110,10 +110,11 @@ Use * or + to connect more than one condition.
 
             std_dev = COEFFS.std(dim=0, unbiased=False)
             std_list.append(std_dev)
-
+        torch.cuda.empty_cache()
         return tuple(std_list)
     
-    return std_func(target)
+    result = std_func(target)
+    return result
 
 
 # --- Added function: compute_std_contamination_only ---
@@ -239,7 +240,7 @@ Use * or + to connect more than one condition.
     if s_cov_func is None: 
         def func_s(x):
                 st_calc.add_ref_ab(ref_a=x, ref_b=fixed_img)
-                coeff_dict = st_calc.scattering_cov_2fields(
+                coeff_dict = st_calc.scattering_cov_2fields_partial(
                     x, fixed_img, use_ref=True, if_large_batch=if_large_batch, C11_criteria=C11_criteria,
                     normalization=normalization, remove_edge=remove_edge
                 )
@@ -247,7 +248,7 @@ Use * or + to connect more than one condition.
     else:
         def func_s(x):
                 st_calc.add_ref_ab(ref_a=x, ref_b=fixed_img)
-                coeff_dict = st_calc.scattering_cov_2fields(
+                coeff_dict = st_calc.scattering_cov_2fields_partial(
                     x, fixed_img, use_ref=True, if_large_batch=if_large_batch, C11_criteria=C11_criteria,
                     normalization=normalization, remove_edge=remove_edge
                 )
@@ -294,10 +295,11 @@ Use * or + to connect more than one condition.
 
             std_dev = COEFFS.std(dim=0, unbiased=False)
             std_list.append(std_dev)
-
+        torch.cuda.empty_cache()
         return tuple(std_list)
     
-    return std_func(target)
+    result = std_func(target)
+    return result
 
 def compute_std_double(
     image, contamination_arr, image_ref=None, s_cov_func = None, 
@@ -379,6 +381,7 @@ Use * or + to connect more than one condition.
                 COEFFS.append(stats)
         COEFFS = torch.stack(COEFFS, dim=0)  # Shape: (Mn, N_coeffs)
         std_dev = COEFFS.std(dim=0, unbiased=False)
+        torch.cuda.empty_cache()
         return std_dev
 
     # Generate std_func_dual for all unique pairs
@@ -471,33 +474,57 @@ def denoise(
             coef_list.append(func_s(map1, map2))
 
         return torch.cat(coef_list, axis=-1)
+    
+    def func_partial(map1, ref_map1, map2, ref_map2):
+        coef_list = []
+        # Two-field case
+        st_calc.add_ref_ab(ref_a=ref_map1, ref_b=ref_map2)
+        if s_cov_func_2fields is None:
+            def func_s(x1, x2):
+                coeff_dict = st_calc.scattering_cov_2fields_partial(
+                    x1, x2, use_ref=True, if_large_batch=if_large_batch, C11_criteria=C11_criteria,
+                    normalization=normalization, remove_edge=remove_edge
+                )
+                return coeff_dict['for_synthesis']
+        else:
+            def func_s(x1, x2):
+                coeff_dict = st_calc.scattering_cov_2fields_partial(
+                    x1, x2, use_ref=True, if_large_batch=if_large_batch, C11_criteria=C11_criteria,
+                    normalization=normalization, remove_edge=remove_edge
+                )
+                return s_cov_func_2fields(coeff_dict)
+                
+        
+        coef_list.append(func_s(map1, map2))
+
+        return torch.cat(coef_list, axis=-1)
         
     def loss_func(*args):
         assert len(args) % 2 == 0, "Expecting equal number of targets and images"
         mid = len(args) // 2
         targets, images = args[:mid], args[mid:]
 
-        std_single = std['single']
+        # std_single = std['single']
         std_partial = std['partial']
         std_double = std['double'][0]
         mean_std = std['noise_mean_std']
 
         if epochNo is None or epochNo % 2 == 0:
             loss_terms = [
-                loss_func_single(targets[0], images[0], std_single[0], contamination_arr[:, 0]),
-                loss_func_single(targets[1], images[1], std_single[1], contamination_arr[:, 1]),
+                # loss_func_single(targets[0], images[0], std_single[0], contamination_arr[:, 0]),
+                # loss_func_single(targets[1], images[1], std_single[1], contamination_arr[:, 1]),
                 loss_func_partial(targets[0], images[0], fixed_img, std_partial[0], contamination_arr[:, 0]),
-                loss_func_partial(targets[0], images[0], fixed_img, std_partial[1], contamination_arr[:, 1]),
+                loss_func_partial(targets[1], images[1], fixed_img, std_partial[1], contamination_arr[:, 1]),
                 loss_func_double(targets[0], images[0], targets[1], images[1], std_double, contamination_arr),
                 # loss_func_CC(targets[0], images[0], mean_std[0]),
                 # loss_func_CC(targets[1], images[1], mean_std[1])
             ]
         else:
             loss_terms = [
-                loss_func_single(targets[0], images[0], std_single[0], contamination_arr[:, 0]),
-                loss_func_single(targets[1], images[1], std_single[1], contamination_arr[:, 1]),
+                # loss_func_single(targets[0], images[0], std_single[0], contamination_arr[:, 0]),
+                # loss_func_single(targets[1], images[1], std_single[1], contamination_arr[:, 1]),
                 loss_func_partial(targets[0], images[0], fixed_img, std_partial[0], contamination_arr[:, 0]),
-                loss_func_partial(targets[0], images[0], fixed_img, std_partial[1], contamination_arr[:, 1]),
+                loss_func_partial(targets[1], images[1], fixed_img, std_partial[1], contamination_arr[:, 1]),
                 loss_func_double(targets[0], images[0], targets[1], images[1], std_double, contamination_arr),
                 loss_func_CC(targets[0], images[0], mean_std[0]),
                 loss_func_CC(targets[1], images[1], mean_std[1])
@@ -505,18 +532,6 @@ def denoise(
 
         return sum(loss_terms) / len(loss_terms)
 
-    
-    # def loss_func(*args):
-    #     assert len(args) % 2 == 0, "Expecting equal number of targets and images"
-    #     mid = len(args) // 2
-    #     targets = args[:mid]
-    #     images = args[mid:]
-
-    #     loss1 = loss_func_single(targets[0], images[0], std[0], contamination_arr[:, 0])
-    #     loss2 = loss_func_single(targets[1], images[1], std[1], contamination_arr[:, 1])
-    #     loss3 = loss_func_double(targets[0], images[0], targets[1], images[1], contamination_arr)
-
-    #     return (loss1 + loss2 + loss3) / 3
 
     # def loss_func(*args):
     #     *targets, image = args
@@ -577,7 +592,7 @@ def denoise(
         contamination_tensor = contamination_arr.to(device=image.device, dtype=dtype)
 
         # Step 1: Compute reference statistics
-        target_stats = func(target, target, fixed_img, fixed_img).squeeze(0)  # Shape: (N_coeffs,)
+        target_stats = func_partial(target, target, fixed_img, fixed_img).squeeze(0)  # Shape: (N_coeffs,)
 
         # Step 2: Add contamination
         cont_images = image.unsqueeze(0) + contamination_tensor  # (n_realizations, 1, H, W)
@@ -588,7 +603,7 @@ def denoise(
         fixed_batch = fixed_tensor.unsqueeze(0) + torch.zeros_like(contamination_tensor)
 
         # Step 3: Compute noisy statistics in a batched way
-        noisy_stats_tensor = func(cont_images[:, 0], target, fixed_batch[:, 0], fixed_img)  # Shape: (n_realizations, N_coeffs)
+        noisy_stats_tensor = func_partial(cont_images[:, 0], target, fixed_batch[:, 0], fixed_img)  # Shape: (n_realizations, N_coeffs)
 
         # Step 4: Normalize and compute squared norm
         diff = noisy_stats_tensor - target_stats[None, :]
@@ -600,7 +615,6 @@ def denoise(
 
         return squared_norms.mean()
 
-    
     def loss_func_double(target1, image1, target2, image2, std_double, contamination_arr):
         """
         Computes the BR loss for dual-input using precomputed contamination.
@@ -754,6 +768,7 @@ def denoise_general(
 
         # Backpropagate the loss
         loss.backward()
+        torch.cuda.empty_cache()  # Free unused cached memory
         return loss
     
     # Perform optimization
@@ -766,8 +781,12 @@ def denoise_general(
     t_end = time.time()
     print('Time used: ', t_end - t_start, 's')
 
+    # Cleanup model and empty CUDA cache
+    del image_model
+    torch.cuda.empty_cache()
+
     # Return the optimized images as numpy arrays
-    return tuple(img.cpu().detach().numpy() for img in image_model.get_images())
+    return tuple(img.cpu().detach().numpy() for img in image_inits)
 
 
 def scale_annotation_a_b(idx_info):
