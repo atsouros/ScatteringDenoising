@@ -644,8 +644,7 @@ class Scattering2d(object):
         data_f = torch.fft.fftn(data, dim=(-2,-1))
         
         # initialize tensors for scattering coefficients
-        P00 = torch.zeros((N_image,J,L), dtype=data.dtype)
-        P00g = torch.zeros((N_image,J,L), dtype=data.dtype)
+        P00= torch.zeros((N_image,J,L), dtype=data.dtype)
         S1 = torch.zeros((N_image,J,L), dtype=data.dtype)
         C01 = torch.zeros((N_image,J,J,L,L), dtype=data_f.dtype) + np.nan
         P11 = torch.zeros((N_image,J,J,L,L), dtype=data.dtype) + np.nan
@@ -660,7 +659,6 @@ class Scattering2d(object):
         # move torch tensors to gpu device, if required
         if self.device=='gpu':
             P00       = P00.cuda()
-            P00g      = P00g.cuda()
             S1        = S1.cuda()
             C01       = C01.cuda()
             P11       = P11.cuda()
@@ -715,8 +713,8 @@ class Scattering2d(object):
             wavelet_f3 = cut_high_k_off(filters_set[j3], dx3, dy3) # L,x,y
             _, M3, N3 = wavelet_f3.shape
             wavelet_f3_squared = wavelet_f3**2
-            edge_dx = min(4, int(2**(J-1)*dx3*2/M))
-            edge_dy = min(4, int(2**(J-1)*dy3*2/N))
+            edge_dx = min(4, int(2**j3*dx3*2/M))
+            edge_dy = min(4, int(2**j3*dy3*2/N))
             # a normalization change due to the cutoff of frequency space
             fft_factor = 1 /(M3*N3) * (M3*N3/M/N)**2
             for j2 in range(0,j3+1):
@@ -809,52 +807,8 @@ class Scattering2d(object):
                     C11_pre_norm_iso[...,(l2-l1)%L,(l3-l1)%L]+=C11_pre_norm[...,l1,l2,l3].real
                     C11_iso[...,(l2-l1)%L,(l3-l1)%L] += C11[...,l1,l2,l3].real
         C01_iso /= L; P11_iso /= L; C11_pre_norm_iso /= L; C11_iso /= L
-
-        def gaussian_concentric_rings(size, num_rings, sigma=0.1):
-            """
-            Generates individual concentric Gaussian rings as separate images.
-
-            Args:
-                size (int): Size of the image (size x size).
-                num_rings (int): Number of concentric rings.
-                sigma (float): Width of each Gaussian ring.
-
-            Returns:
-                torch.Tensor: A batch of individual rings with shape (num_rings, size, size).
-            """
-            # Create a normalized coordinate grid in [-1, 1]
-            x = torch.linspace(-1, 1, size)
-            y = torch.linspace(-1, 1, size)
-            X, Y = torch.meshgrid(x, y, indexing="ij")
-            
-            # Compute the radial distance
-            R = torch.sqrt(X**2 + Y**2)
-            
-            # Define ring positions (uniformly spaced)
-            ring_positions = (torch.logspace(1,np.log2(M),num_rings,base=2)-1)/M
-            sigmas =sigma*(torch.logspace(1,np.log2(M),num_rings,base=2))/M
-
-
-            # Create a batch of individual rings
-            rings = torch.stack([
-                torch.exp(-((R - ring_positions[i]) ** 2) / (2 * sigmas[i]**2)) for i in range(len(ring_positions))
-            ], dim=0)  # Shape: (num_rings, size, size)
-
-            l1_norms = (torch.sum(rings, dim=(-2, -1), keepdim=True))
-
-            # Normalize each ring by its L1 norm
-            rings /= l1_norms
- 
-
-            return rings  # Each ring is in a separate channel
         
-        N_bins = 2*J
-        gaussians = gaussian_concentric_rings(M,N_bins,sigma = 1)
-        gaussians.cuda()
-        data_f = torch.fft.fftshift(torch.fft.fftn(data, dim=(-2,-1)),dim=(-2,-1))
-        I1g = torch.fft.ifftn(data_f[:,None,:,:].cuda() * gaussians[None,:,:,:].cuda(), dim=(-2,-1)).abs()
-        P00g = (I1g**2).mean((-2,-1))
-                 
+        
         # get a single, flattened data vector for_synthesis
         select_and_index        = get_scattering_index(J, L, normalization, C11_criteria)
         index_for_synthesis     = select_and_index['index_for_synthesis']
@@ -862,7 +816,6 @@ class Scattering2d(object):
         for_synthesis = torch.cat((
             (data.mean((-2,-1))/data.std((-2,-1)))[:,None],
             P00.reshape((N_image, -1)).log(), 
-            P00g.reshape((N_image, -1)).log(),
             S1.reshape((N_image, -1)).log(),
             C01[:,select_and_index['select_2']].real, 
             C01[:,select_and_index['select_2']].imag, 
@@ -885,9 +838,9 @@ class Scattering2d(object):
             for_synthesis_iso = torch.cat(
                 (for_synthesis_iso, P11_iso[:,select_and_index['select_2_iso']].log()), 
                 dim=-1)
-
-        results = {'var': data.var((-2,-1)), 'mean': data.mean((-2,-1)),
-                'P00':P00, 'P00g': P00g,'P00_iso':P00_iso,
+            
+        return {'var': data.var((-2,-1)), 'mean': data.mean((-2,-1)),
+                'P00':P00, 'P00_iso':P00_iso,
                 'S1' : S1, 'S1_iso' : S1_iso,
                 'C01':C01, 'C01_iso':C01_iso,
                 'C11_pre_norm':C11_pre_norm, 'C11_pre_norm_iso':C11_pre_norm_iso,
@@ -897,7 +850,6 @@ class Scattering2d(object):
                 'index_for_synthesis': index_for_synthesis,
                 'index_for_synthesis_iso': index_for_synthesis_iso
         }
-        return results
     
     # ---------------------------------------------------------------------------
     #
@@ -1155,6 +1107,32 @@ class Scattering2d(object):
                     C11_iso   [...,(l2-l1)%L,(l3-l1)%L] +=    C11[...,l1,l2,l3].real
                     Corr11_iso[...,(l2-l1)%L,(l3-l1)%L] += Corr11[...,l1,l2,l3].real
         C01_iso /= L; P11_a_iso /= L; P11_b_iso /= L; C11_iso /= L; Corr11_iso /= L
+
+        # --- Compute P00g statistics ---
+        def gaussian_concentric_rings(size, num_rings, sigma=0.1, device='gpu'):
+            x = torch.linspace(-1, 1, size, device=device)
+            y = torch.linspace(-1, 1, size, device=device)
+            X, Y = torch.meshgrid(x, y, indexing="ij")
+            R = torch.sqrt(X**2 + Y**2)
+            ring_positions = (torch.logspace(1, np.log2(size), num_rings, base=2, device=device) - 1) / size
+            sigmas = sigma * (torch.logspace(1, np.log2(size), num_rings, base=2, device=device)) / size
+            rings = torch.stack([
+                torch.exp(-((R - ring_positions[i]) ** 2) / (2 * sigmas[i]**2)) for i in range(len(ring_positions))
+            ], dim=0)
+            rings /= torch.sum(rings, dim=(-2, -1), keepdim=True)
+            return rings
+
+        # M = self.M
+        # N_bins = 16
+        # device = data_a.device
+        # gaussians = gaussian_concentric_rings(M, N_bins, sigma=1.0, device=device)
+        # # Compute P00g for data_a and data_b separately
+        # data_a_f = torch.fft.fftshift(torch.fft.fftn(data_a, dim=(-2, -1)), dim=(-2, -1))
+        # data_b_f = torch.fft.fftshift(torch.fft.fftn(data_b, dim=(-2, -1)), dim=(-2, -1))
+        # I1g_a = torch.fft.ifftn(data_a_f[:, None, :, :] * gaussians[None, :, :, :], dim=(-2, -1)).abs()
+        # I1g_b = torch.fft.ifftn(data_b_f[:, None, :, :] * gaussians[None, :, :, :], dim=(-2, -1)).abs()
+        # P00g_a = (I1g_a**2).mean(dim=(-2, -1))
+        # P00g_b = (I1g_b**2).mean(dim=(-2, -1))
         
         # generate single, flattened data vector for_synthesis
         select_and_index = get_scattering_index(J, L, normalization, C11_criteria, 2)
@@ -1165,7 +1143,9 @@ class Scattering2d(object):
             (data_a.mean((-2,-1))/data_a.std((-2,-1)))[:,None],
             (data_b.mean((-2,-1))/data_b.std((-2,-1)))[:,None],
             P00_a.reshape((N_image, -1)).log(), 
-            P00_b.reshape((N_image, -1)).log(), 
+            P00_b.reshape((N_image, -1)).log(),
+            # P00g_a.reshape((N_image, -1)).log(), 
+            # P00g_b.reshape((N_image, -1)).log(), 
             S1_a.reshape((N_image, -1)).log(),
             S1_b.reshape((N_image, -1)).log(),
             Corr00.reshape((N_image, -1)).real, 
@@ -1188,10 +1168,11 @@ class Scattering2d(object):
             Corr11_iso[:,:,select_and_index['select_3_iso']].reshape((N_image, -1)), 
 #             Corr11_iso[:,:,select_and_index['select_3_iso']].reshape((N_image, -1)).imag
         ), dim=-1)
-            
+
         return {'var_a': data_a.var((-2,-1)), 'mean_a': data_a.mean((-2,-1)),
                 'var_b': data_b.var((-2,-1)), 'mean_b': data_b.mean((-2,-1)),
                 'P00_a':P00_a, 'P00_a_iso':P00_a_iso, 'P00_b':P00_b, 'P00_b_iso':P00_b_iso,
+                # 'P00g_a': P00g_a, 'P00g_b': P00g_b, 
                 'Corr00': Corr00, 'Corr00_iso': Corr00_iso,
                 'C01':C01, 'C01_iso':C01_iso,
                 'P11_a':P11_a, 'P11_a_iso':P11_a_iso, 'P11_b':P11_b, 'P11_b_iso':P11_b_iso,
@@ -1381,10 +1362,6 @@ class Scattering2d(object):
         index_for_synthesis_iso = select_and_index['index_for_synthesis_iso']
         
         for_synthesis = torch.cat((
-            (data_a.mean((-2,-1))/data_a.std((-2,-1)))[:,None],
-            (data_b.mean((-2,-1))/data_b.std((-2,-1)))[:,None],
-            P00_a.reshape((N_image, -1)).log(), 
-            P00_b.reshape((N_image, -1)).log(), 
             Corr00.reshape((N_image, -1)).real, 
             Corr00.reshape((N_image, -1)).imag, 
             C01[:,:,select_and_index['select_2']].reshape((N_image, -1)).real, 
@@ -1505,8 +1482,8 @@ def get_edge_masks(M, N, J, d0=1):
     edge_masks = torch.empty((J, M, N))
     X, Y = torch.meshgrid(torch.arange(M), torch.arange(N), indexing='ij')
     for j in range(J):
-        edge_dx = min(M//4, 2**(J-1)*d0)
-        edge_dy = min(N//4, 2**(J-1)*d0)
+        edge_dx = min(M//4, 2**j*d0)
+        edge_dy = min(N//4, 2**j*d0)
         edge_masks[j] = (X>=edge_dx) * (X<=M-edge_dx) * (Y>=edge_dy) * (Y<=N-edge_dy)
     return edge_masks
 

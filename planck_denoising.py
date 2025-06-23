@@ -11,8 +11,6 @@ np.math = math  # Redirect numpy.math to the built-in math module
 
 import glob
 
-# Define patch number
-
 patch = "166"
 
 base_path = f"/obs/atsouros/ScatteringDenoising/planck_data/BK_CMB_S4_north_patch/"
@@ -21,6 +19,9 @@ base_path = f"/obs/atsouros/ScatteringDenoising/planck_data/BK_CMB_S4_north_patc
 i_path = glob.glob(f"{base_path}signal/patch_{patch}/patch_{patch}_I*.npy")[0]
 q_path = glob.glob(f"{base_path}signal/patch_{patch}/patch_{patch}_Q*.npy")[0]
 u_path = glob.glob(f"{base_path}signal/patch_{patch}/patch_{patch}_U*.npy")[0]
+
+q_path_GNILC = glob.glob(f"{base_path}GNILC/Q_GNILC_PR3_patch_{patch}_*.npy")[0]
+u_path_GNILC = glob.glob(f"{base_path}GNILC/U_GNILC_PR3_patch_{patch}_*.npy")[0]
 
 def downsample(image):
     func = utils.downsample_by_four
@@ -41,6 +42,14 @@ signal_I = np.load(i_path)
 signal_I = downsample(signal_I)
 signal_I = signal_I[None, :, :]
 
+Q_GNILC = np.load(q_path_GNILC)
+Q_GNILC = downsample(Q_GNILC)
+Q_GNILC = Q_GNILC[None, :, :]
+
+U_GNILC = np.load(u_path_GNILC)
+U_GNILC = downsample(U_GNILC)
+U_GNILC = U_GNILC[None, :, :]
+
 # Define base nuisance directory
 
 # Get sorted list of file paths from Stokes_Q and Stokes_U directories
@@ -51,27 +60,41 @@ nuisance_U = sorted(glob.glob(f"{base_path}nuisance/patch_{patch}/Stokes_U/patch
 contamination_arr_Q = np.stack([downsample(np.load(f))[None, :, :] for f in nuisance_Q], axis=0)
 contamination_arr_U = np.stack([downsample(np.load(f))[None, :, :] for f in nuisance_U], axis=0)
 
-# Stack into shape (N_maps, 3, 768, 768)
+# Stack into shape (N_maps, 2, H, W)
 contamination_arr = np.stack([contamination_arr_Q, contamination_arr_U], axis=1)
 
+# # Initialize image_init using the first nuisance map for each channel
+# image_init_1 = (
+#     Q_GNILC + contamination_arr[:, 0][0],
+#     U_GNILC + contamination_arr[:, 1][0]
+# )
+
+# # Remove the first nuisance map from each channel in contamination_arr
+# contamination_arr = torch.stack([
+#     torch.from_numpy(contamination_arr[:, 0][1:]),
+#     torch.from_numpy(contamination_arr[:, 1][1:])
+# ], dim=1).numpy()
+
+
 image_target = (signal_Q, signal_U)
+image_init = image_target
 threshold_func = None
-remove_edge = True
+remove_edge = False
 
 std = {
-    # 'single': denoising.compute_std(image_target, contamination_arr=contamination_arr,
-    #                                 s_cov_func=threshold_func, remove_edge=remove_edge, precision='double'),
+    'single': denoising.compute_std(image_init, contamination_arr=contamination_arr,
+                                    s_cov_func=threshold_func, remove_edge=remove_edge, precision='double'),
 
-    'partial': denoising.compute_std_partial(image_target, contamination_arr, signal_I,
+    'partial': denoising.compute_std_partial(image_init, contamination_arr, signal_I,
                                            remove_edge=remove_edge, precision='double'),                               
 
-    'double': denoising.compute_std_double(image_target, contamination_arr=contamination_arr,
+    'double': denoising.compute_std_double(image_init, contamination_arr=contamination_arr,
                                            remove_edge=remove_edge, precision='double'),
 
-    'noise_mean_std': denoising.noise_mean_std(contamination_arr, remove_edge=remove_edge, precision='double')
-}
+    'noise_mean_std': denoising.noise_mean_std(contamination_arr, remove_edge=remove_edge, precision='double'),
 
-image_init = image_target
+    'sc': denoising.compute_std_sc(image_init, contamination_arr, remove_edge=remove_edge, precision='double')
+}
 
 n_epochs = 4 #number of epochs
 # decontaminate
@@ -84,18 +107,24 @@ for i in range(n_epochs):
     image_init = running_map
     torch.cuda.empty_cache()
 
-    std = {
-    # 'single': denoising.compute_std(running_map, contamination_arr=contamination_arr,
-    #                                 s_cov_func=threshold_func, remove_edge=remove_edge, precision='double'),
+    if (i + 1) % 2 == 0:
 
-    'partial': denoising.compute_std_partial(running_map, contamination_arr, signal_I,
-                                           remove_edge=remove_edge, precision='double'),                               
+        std = {
+            'single': denoising.compute_std(running_map, contamination_arr=contamination_arr,
+                                            s_cov_func=threshold_func, remove_edge=remove_edge, precision='double'),
 
-    'double': denoising.compute_std_double(running_map, contamination_arr=contamination_arr,
-                                           remove_edge=remove_edge, precision='double'),
+            'partial': denoising.compute_std_partial(running_map, contamination_arr, signal_I,
+                                                remove_edge=remove_edge, precision='double'),                               
 
-    'noise_mean_std': std['noise_mean_std']
-}
+            'double': denoising.compute_std_double(running_map, contamination_arr=contamination_arr,
+                                                remove_edge=remove_edge, precision='double'),
+
+            'noise_mean_std': std['noise_mean_std'], 
+
+            'sc': denoising.compute_std_sc(running_map, contamination_arr, remove_edge=remove_edge, precision='double')
+        }
+        image_init = image_target
+
 
 image_syn_Q = running_map[0]
 image_syn_U = running_map[1]
