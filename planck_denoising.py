@@ -16,9 +16,9 @@ patch = "166"
 base_path = f"/obs/atsouros/ScatteringDenoising/planck_data/BK_CMB_S4_north_patch/"
 
 # Find the file using a wildcard
-i_path = glob.glob(f"{base_path}signal/patch_{patch}/patch_{patch}_I*.npy")[0]
-q_path = glob.glob(f"{base_path}signal/patch_{patch}/patch_{patch}_Q*.npy")[0]
-u_path = glob.glob(f"{base_path}signal/patch_{patch}/patch_{patch}_U*.npy")[0]
+i_path = glob.glob(f"{base_path}signal/patch_{patch}/patch_{patch}_I857*.npy")[0]
+q_path = glob.glob(f"{base_path}signal/patch_{patch}/patch_{patch}_Q353*.npy")[0]
+u_path = glob.glob(f"{base_path}signal/patch_{patch}/patch_{patch}_U353*.npy")[0]
 
 q_path_GNILC = glob.glob(f"{base_path}GNILC/Q_GNILC_PR3_patch_{patch}_*.npy")[0]
 u_path_GNILC = glob.glob(f"{base_path}GNILC/U_GNILC_PR3_patch_{patch}_*.npy")[0]
@@ -26,6 +26,16 @@ u_path_GNILC = glob.glob(f"{base_path}GNILC/U_GNILC_PR3_patch_{patch}_*.npy")[0]
 def downsample(image):
     func = utils.downsample_by_four
     return func(image)
+
+def create_apodizing_mask_np(M, N, J):
+    """
+    Create an apodizing mask of shape (1, M, N) using NumPy.
+    """
+    margin = 2**(J - 3)
+    mask = np.zeros((M, N), dtype=np.float32)
+    mask[margin:M - margin, margin:N - margin] = 1.0
+    return mask[None, :, :]  # shape (1, M, N)
+
 
 # # Load it
 signal_Q = np.load(q_path)
@@ -50,17 +60,32 @@ U_GNILC = np.load(u_path_GNILC)
 U_GNILC = downsample(U_GNILC)
 U_GNILC = U_GNILC[None, :, :]
 
+M,N = signal_Q[0].shape
+J = int(np.log2(M)) - 1
+mask = create_apodizing_mask_np(M, N, J)
+
+signal_Q *= mask
+signal_U *= mask
+signal_I *= mask
+Q_GNILC  *= mask
+U_GNILC  *= mask
+
 # Define base nuisance directory
 
 # Get sorted list of file paths from Stokes_Q and Stokes_U directories
-nuisance_Q = sorted(glob.glob(f"{base_path}nuisance/patch_{patch}/Stokes_Q/patch_{patch}_noise_Q*.npy"))
-nuisance_U = sorted(glob.glob(f"{base_path}nuisance/patch_{patch}/Stokes_U/patch_{patch}_noise_U*.npy"))
+nuisance_Q = sorted(glob.glob(f"{base_path}nuisance/patch_{patch}/Stokes_Q/patch_{patch}_noise_Q353*.npy"))
+nuisance_U = sorted(glob.glob(f"{base_path}nuisance/patch_{patch}/Stokes_U/patch_{patch}_noise_U353*.npy"))
 
 # Load and downsample
-contamination_arr_Q = np.stack([downsample(np.load(f))[None, :, :] for f in nuisance_Q], axis=0)
-contamination_arr_U = np.stack([downsample(np.load(f))[None, :, :] for f in nuisance_U], axis=0)
+contamination_arr_Q = np.stack([
+    downsample(np.load(f))[None, :, :] * mask for f in nuisance_Q
+], axis=0)
 
-# Stack into shape (N_maps, 2, H, W)
+contamination_arr_U = np.stack([
+    downsample(np.load(f))[None, :, :] * mask for f in nuisance_U
+], axis=0)
+
+# Stack into shape (N_maps, 2, M, N)
 contamination_arr = np.stack([contamination_arr_Q, contamination_arr_U], axis=1)
 
 # # Initialize image_init using the first nuisance map for each channel
@@ -109,6 +134,7 @@ for i in range(n_epochs):
 
     if (i + 1) % 2 == 0:
 
+
         std = {
             'single': denoising.compute_std(running_map, contamination_arr=contamination_arr,
                                             s_cov_func=threshold_func, remove_edge=remove_edge, precision='double'),
@@ -123,7 +149,7 @@ for i in range(n_epochs):
 
             'sc': denoising.compute_std_sc(running_map, contamination_arr, remove_edge=remove_edge, precision='double')
         }
-        image_init = image_target
+            # image_init = image_target
 
 
 image_syn_Q = running_map[0]

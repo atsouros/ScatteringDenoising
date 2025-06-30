@@ -34,6 +34,10 @@ Use * or + to connect more than one condition.
     if not torch.cuda.is_available(): device='cpu'
 
     dtype = torch.double if precision == 'double' else torch.float
+
+    device_torch = torch.device('cuda' if device == 'gpu' else 'cpu')
+
+
     if device == 'gpu':
         contamination_arr = torch.tensor(contamination_arr, dtype=dtype).cuda()
     else:
@@ -67,10 +71,17 @@ Use * or + to connect more than one condition.
                 normalization=normalization, pseudo_coef=pseudo_coef, remove_edge=remove_edge
             )
             return s_cov_func(coeff_dict)
+        
+    margin = 2**(J-3)
+    dtype_np = np.float64 if precision == 'double' else np.float32
+    mask_np = np.zeros((M, N), dtype=dtype_np)
+    mask_np[margin:M - margin, margin:N - margin] = 1.0
+    mask = torch.from_numpy(mask_np).to(device_torch).type(dtype)
 
     def func(image):
+        image = image * mask
         coef_list = []
-        coef_list.append(func_s(image))        
+        coef_list.append(func_s(image))
         return torch.cat(coef_list, axis=-1)
                 
     def std_func(target_tuple, Mn=10, batch_size=5):
@@ -132,6 +143,9 @@ def noise_mean_std(
     if not torch.cuda.is_available():
         device = 'cpu'
 
+    device_torch = torch.device('cuda' if device == 'gpu' else 'cpu')
+
+
     dtype = torch.double if precision == 'double' else torch.float
     if device == 'gpu':
         contamination_arr = torch.tensor(contamination_arr, dtype=dtype).cuda()
@@ -162,8 +176,15 @@ def noise_mean_std(
                 normalization=normalization, pseudo_coef=pseudo_coef, remove_edge=remove_edge
             )
             return s_cov_func(coeff_dict)
-
+        
+    margin = 2**(J-3)
+    dtype_np = np.float64 if precision == 'double' else np.float32
+    mask_np = np.zeros((M, N), dtype=dtype_np)
+    mask_np[margin:M - margin, margin:N - margin] = 1.0
+    mask = torch.from_numpy(mask_np).to(device_torch).type(dtype)
+        
     def func(image):
+        image = image * mask
         coef_list = []
         coef_list.append(func_s(image))
         return torch.cat(coef_list, axis=-1)
@@ -225,6 +246,9 @@ Use * or + to connect more than one condition.
     else:
         contamination_arr = torch.tensor(contamination_arr, dtype=dtype)
 
+    device_torch = torch.device('cuda' if device == 'gpu' else 'cpu')
+
+
     np.random.seed(seed)
     if C11_criteria is None:
         C11_criteria = 'j2>=j1'
@@ -255,7 +279,15 @@ Use * or + to connect more than one condition.
                 return s_cov_func(coeff_dict)
 
     st_calc = Scattering2d(M, N, J, L, device, wavelets, l_oversampling=l_oversampling, frequency_factor=frequency_factor)
+
+    margin = 2**(J-3)
+    dtype_np = np.float64 if precision == 'double' else np.float32
+    mask_np = np.zeros((M, N), dtype=dtype_np)
+    mask_np[margin:M - margin, margin:N - margin] = 1.0
+    mask = torch.from_numpy(mask_np).to(device_torch).type(dtype)
+
     def func(image):
+        image = image * mask
         coef_list = []
         coef_list.append(func_s(image))
         return torch.cat(coef_list, axis=-1)
@@ -320,8 +352,13 @@ Use * or + to connect more than one condition.
     np.random.seed(seed)
     C11_criteria = 'j2>=j1'
     _, M, N = image[0].shape
+
+    device_torch = torch.device('cuda' if device == 'gpu' else 'cpu')
+
     
     J = int(np.log2(min(M,N))) - 1 
+
+    dtype = torch.double if precision == 'double' else torch.float
 
     image_ref = image if image_ref is None else image_ref
     # Insert assertion after image_ref assignment
@@ -342,9 +379,23 @@ Use * or + to connect more than one condition.
                     normalization=normalization, remove_edge=remove_edge
                 )
                 return s_cov_func(coeff_dict)
+        
+    
+        
+    margin = 2**(J-3)
+    dtype_np = np.float64 if precision == 'double' else np.float32
+    mask_np = np.zeros((M, N), dtype=dtype_np)
+    mask_np[margin:M - margin, margin:N - margin] = 1.0
+    mask = torch.from_numpy(mask_np).to(device_torch).type(dtype)
 
     st_calc = Scattering2d(M, N, J, L, device, wavelets, l_oversampling=l_oversampling, frequency_factor=frequency_factor)
     def func(map1, ref_map1, map2=None, ref_map2=None):
+        map1 = map1 * mask
+        ref_map1 = ref_map1 * mask
+        if map2 is not None:
+            map2 = map2 * mask
+        if ref_map2 is not None:
+            ref_map2 = ref_map2 * mask
         coef_list = []
         # Two-field case
         st_calc.add_ref_ab(ref_a=ref_map1, ref_b=ref_map2)
@@ -404,6 +455,11 @@ def compute_std_sc(
     remove_edge=False,
     ):
 
+    dtype = torch.double if precision == 'double' else torch.float
+
+    device_torch = torch.device('cuda' if device == 'gpu' else 'cpu')
+
+
     if not torch.cuda.is_available(): device='cpu'
     np.random.seed(seed)
     C11_criteria = 'j2>=j1'
@@ -430,9 +486,22 @@ def compute_std_sc(
                     normalization=normalization, remove_edge=remove_edge
                 )
                 return s_cov_func(coeff_dict)
+        
 
-    st_calc = Scattering2d(M, N, J, L, device, wavelets, l_oversampling=l_oversampling, frequency_factor=frequency_factor)
+    margin = 2**(J-3)
+    dtype_np = np.float64 if precision == 'double' else np.float32
+    mask_np = np.zeros((M, N), dtype=dtype_np)
+    mask_np[margin:M - margin, margin:N - margin] = 1.0
+    mask = torch.from_numpy(mask_np).to(device_torch).type(dtype)
+
+    st_calc = Scattering2d(M, N, J, L, device, wavelets, l_oversampling=l_oversampling, frequency_factor=frequency_factor)    
     def func(map1, ref_map1, map2=None, ref_map2=None):
+        map1 = map1 * mask
+        ref_map1 = ref_map1 * mask
+        if map2 is not None:
+            map2 = map2 * mask
+        if ref_map2 is not None:
+            ref_map2 = ref_map2 * mask
         coef_list = []
         # Two-field case
         st_calc.add_ref_ab(ref_a=ref_map1, ref_b=ref_map2)
@@ -498,6 +567,9 @@ def denoise(
     np.random.seed(seed)
     if C11_criteria is None:
         C11_criteria = 'j2>=j1'
+
+    device_torch = torch.device('cuda' if device == 'gpu' else 'cpu')
+
         
     if isinstance(target, tuple):
         _, M, N = target[0].shape
@@ -510,6 +582,8 @@ def denoise(
         
     if J is None:
         J = int(np.log2(min(M,N))) - 1
+
+    dtype = torch.double if precision == 'double' else torch.float
     
     st_calc = Scattering2d(M, N, J, L, device, wavelets, l_oversampling=l_oversampling, frequency_factor=frequency_factor)
 
@@ -582,40 +656,63 @@ def denoise(
         coef_list.append(func_s(map1, map2))
 
         return torch.cat(coef_list, axis=-1)
-        
+    
+    margin = 2**(J-3)
+    dtype_np = np.float64 if precision == 'double' else np.float32
+    mask_np = np.zeros((M, N), dtype=dtype_np)
+    mask_np[margin:M - margin, margin:N - margin] = 1.0
+    mask = torch.from_numpy(mask_np).to(device_torch).type(dtype)
+    
     def loss_func(*args):
         assert len(args) % 2 == 0, "Expecting equal number of targets and images"
         mid = len(args) // 2
         targets, images = args[:mid], args[mid:]
 
         std_single = std['single']
-        std_partial = std['partial']
-        std_double = std['double'][0]
-        mean_std = std['noise_mean_std']
-        mean_std_DC = std['sc']
 
-        if epochNo is None or epochNo % 2 == 0:
-            loss_terms = [
-                loss_func_single(targets[0], images[0], std_single[0], contamination_arr[:, 0]),
-                loss_func_single(targets[1], images[1], std_single[1], contamination_arr[:, 1]),
-                loss_func_partial(targets[0], images[0], fixed_img, std_partial[0], contamination_arr[:, 0]),
-                loss_func_partial(targets[1], images[1], fixed_img, std_partial[1], contamination_arr[:, 1]),
-                loss_func_double(targets[0], images[0], targets[1], images[1], std_double, contamination_arr)
+        loss_terms = [
+            loss_func_single(targets[0], images[0], std_single[0], contamination_arr[:, 0]),
+            loss_func_single(targets[1], images[1], std_single[1], contamination_arr[:, 1])        
             ]
-        else:
-            loss_terms = [
-                loss_func_single(targets[0], images[0], std_single[0], contamination_arr[:, 0]),
-                loss_func_single(targets[1], images[1], std_single[1], contamination_arr[:, 1]),
-                loss_func_partial(targets[0], images[0], fixed_img, std_partial[0], contamination_arr[:, 0]),
-                loss_func_partial(targets[1], images[1], fixed_img, std_partial[1], contamination_arr[:, 1]),
-                loss_func_double(targets[0], images[0], targets[1], images[1], std_double, contamination_arr),
-                loss_func_CC(targets[0], images[0], mean_std[0]),
-                loss_func_CC(targets[1], images[1], mean_std[1]),
-                loss_func_DC(targets[0], images[0], mean_std_DC[0]),
-                loss_func_DC(targets[1], images[1], mean_std_DC[1])
-            ]
-
+        
         return sum(loss_terms) / len(loss_terms)
+        
+    # def loss_func(*args):
+    #     assert len(args) % 2 == 0, "Expecting equal number of targets and images"
+    #     mid = len(args) // 2
+    #     targets, images = args[:mid], args[mid:]
+
+    #     targets = tuple(t * mask for t in targets)
+    #     images = tuple(i * mask for i in images)
+
+    #     std_single = std['single']
+    #     std_partial = std['partial']
+    #     std_double = std['double'][0]
+    #     mean_std = std['noise_mean_std']
+    #     mean_std_DC = std['sc']
+
+    #     if epochNo is None or epochNo % 2 == 0:
+    #         loss_terms = [
+    #             loss_func_single(targets[0], images[0], std_single[0], contamination_arr[:, 0]),
+    #             loss_func_single(targets[1], images[1], std_single[1], contamination_arr[:, 1]),
+    #             loss_func_partial(targets[0], images[0], fixed_img, std_partial[0], contamination_arr[:, 0]),
+    #             loss_func_partial(targets[1], images[1], fixed_img, std_partial[1], contamination_arr[:, 1]),
+    #             loss_func_double(targets[0], images[0], targets[1], images[1], std_double, contamination_arr)
+    #         ]
+    #     else:
+    #         loss_terms = [
+    #             loss_func_single(targets[0], images[0], std_single[0], contamination_arr[:, 0]),
+    #             loss_func_single(targets[1], images[1], std_single[1], contamination_arr[:, 1]),
+    #             loss_func_partial(targets[0], images[0], fixed_img, std_partial[0], contamination_arr[:, 0]),
+    #             loss_func_partial(targets[1], images[1], fixed_img, std_partial[1], contamination_arr[:, 1]),
+    #             loss_func_double(targets[0], images[0], targets[1], images[1], std_double, contamination_arr),
+    #             loss_func_CC(targets[0], images[0], mean_std[0]),
+    #             loss_func_CC(targets[1], images[1], mean_std[1]),
+    #             loss_func_DC(targets[0], images[0], mean_std_DC[0]),
+    #             loss_func_DC(targets[1], images[1], mean_std_DC[1])
+    #         ]
+
+    #     return sum(loss_terms) / len(loss_terms)
 
 
     # def loss_func(*args):

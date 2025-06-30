@@ -850,9 +850,14 @@ class Scattering2d(object):
         
         N_bins = 2*J
         gaussians = gaussian_concentric_rings(M,N_bins,sigma = 1)
-        gaussians.cuda()
+        if self.device=='gpu':
+            gaussians.cuda()
         data_f = torch.fft.fftshift(torch.fft.fftn(data, dim=(-2,-1)),dim=(-2,-1))
-        I1g = torch.fft.ifftn(data_f[:,None,:,:].cuda() * gaussians[None,:,:,:].cuda(), dim=(-2,-1)).abs()
+        if self.device=='gpu':
+            I1g = torch.fft.ifftn(data_f[:,None,:,:].cuda() * gaussians[None,:,:,:].cuda(), dim=(-2,-1)).abs()
+        else:
+            I1g = torch.fft.ifftn(data_f[:,None,:,:]* gaussians[None,:,:,:], dim=(-2,-1)).abs()
+
         P00g = (I1g**2).mean((-2,-1))
                  
         # get a single, flattened data vector for_synthesis
