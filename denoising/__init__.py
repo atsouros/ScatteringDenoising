@@ -34,10 +34,6 @@ Use * or + to connect more than one condition.
     if not torch.cuda.is_available(): device='cpu'
 
     dtype = torch.double if precision == 'double' else torch.float
-
-    device_torch = torch.device('cuda' if device == 'gpu' else 'cpu')
-
-
     if device == 'gpu':
         contamination_arr = torch.tensor(contamination_arr, dtype=dtype).cuda()
     else:
@@ -71,17 +67,10 @@ Use * or + to connect more than one condition.
                 normalization=normalization, pseudo_coef=pseudo_coef, remove_edge=remove_edge
             )
             return s_cov_func(coeff_dict)
-        
-    margin = 2**(J-3)
-    dtype_np = np.float64 if precision == 'double' else np.float32
-    mask_np = np.zeros((M, N), dtype=dtype_np)
-    mask_np[margin:M - margin, margin:N - margin] = 1.0
-    mask = torch.from_numpy(mask_np).to(device_torch).type(dtype)
 
     def func(image):
-        image = image * mask
         coef_list = []
-        coef_list.append(func_s(image))
+        coef_list.append(func_s(image))        
         return torch.cat(coef_list, axis=-1)
                 
     def std_func(target_tuple, Mn=10, batch_size=5):
@@ -121,11 +110,10 @@ Use * or + to connect more than one condition.
 
             std_dev = COEFFS.std(dim=0, unbiased=False)
             std_list.append(std_dev)
-        torch.cuda.empty_cache()
+
         return tuple(std_list)
     
-    result = std_func(target)
-    return result
+    return std_func(target)
 
 
 # --- Added function: compute_std_contamination_only ---
@@ -142,9 +130,6 @@ def noise_mean_std(
 ):
     if not torch.cuda.is_available():
         device = 'cpu'
-
-    device_torch = torch.device('cuda' if device == 'gpu' else 'cpu')
-
 
     dtype = torch.double if precision == 'double' else torch.float
     if device == 'gpu':
@@ -176,15 +161,8 @@ def noise_mean_std(
                 normalization=normalization, pseudo_coef=pseudo_coef, remove_edge=remove_edge
             )
             return s_cov_func(coeff_dict)
-        
-    margin = 2**(J-3)
-    dtype_np = np.float64 if precision == 'double' else np.float32
-    mask_np = np.zeros((M, N), dtype=dtype_np)
-    mask_np[margin:M - margin, margin:N - margin] = 1.0
-    mask = torch.from_numpy(mask_np).to(device_torch).type(dtype)
-        
+
     def func(image):
-        image = image * mask
         coef_list = []
         coef_list.append(func_s(image))
         return torch.cat(coef_list, axis=-1)
@@ -246,9 +224,6 @@ Use * or + to connect more than one condition.
     else:
         contamination_arr = torch.tensor(contamination_arr, dtype=dtype)
 
-    device_torch = torch.device('cuda' if device == 'gpu' else 'cpu')
-
-
     np.random.seed(seed)
     if C11_criteria is None:
         C11_criteria = 'j2>=j1'
@@ -264,7 +239,7 @@ Use * or + to connect more than one condition.
     if s_cov_func is None: 
         def func_s(x):
                 st_calc.add_ref_ab(ref_a=x, ref_b=fixed_img)
-                coeff_dict = st_calc.scattering_cov_2fields_partial(
+                coeff_dict = st_calc.scattering_cov_2fields(
                     x, fixed_img, use_ref=True, if_large_batch=if_large_batch, C11_criteria=C11_criteria,
                     normalization=normalization, remove_edge=remove_edge
                 )
@@ -272,22 +247,14 @@ Use * or + to connect more than one condition.
     else:
         def func_s(x):
                 st_calc.add_ref_ab(ref_a=x, ref_b=fixed_img)
-                coeff_dict = st_calc.scattering_cov_2fields_partial(
+                coeff_dict = st_calc.scattering_cov_2fields(
                     x, fixed_img, use_ref=True, if_large_batch=if_large_batch, C11_criteria=C11_criteria,
                     normalization=normalization, remove_edge=remove_edge
                 )
                 return s_cov_func(coeff_dict)
 
     st_calc = Scattering2d(M, N, J, L, device, wavelets, l_oversampling=l_oversampling, frequency_factor=frequency_factor)
-
-    margin = 2**(J-3)
-    dtype_np = np.float64 if precision == 'double' else np.float32
-    mask_np = np.zeros((M, N), dtype=dtype_np)
-    mask_np[margin:M - margin, margin:N - margin] = 1.0
-    mask = torch.from_numpy(mask_np).to(device_torch).type(dtype)
-
     def func(image):
-        image = image * mask
         coef_list = []
         coef_list.append(func_s(image))
         return torch.cat(coef_list, axis=-1)
@@ -327,11 +294,10 @@ Use * or + to connect more than one condition.
 
             std_dev = COEFFS.std(dim=0, unbiased=False)
             std_list.append(std_dev)
-        torch.cuda.empty_cache()
+
         return tuple(std_list)
     
-    result = std_func(target)
-    return result
+    return std_func(target)
 
 def compute_std_double(
     image, contamination_arr, image_ref=None, s_cov_func = None, 
@@ -352,13 +318,8 @@ Use * or + to connect more than one condition.
     np.random.seed(seed)
     C11_criteria = 'j2>=j1'
     _, M, N = image[0].shape
-
-    device_torch = torch.device('cuda' if device == 'gpu' else 'cpu')
-
     
     J = int(np.log2(min(M,N))) - 1 
-
-    dtype = torch.double if precision == 'double' else torch.float
 
     image_ref = image if image_ref is None else image_ref
     # Insert assertion after image_ref assignment
@@ -379,23 +340,9 @@ Use * or + to connect more than one condition.
                     normalization=normalization, remove_edge=remove_edge
                 )
                 return s_cov_func(coeff_dict)
-        
-    
-        
-    margin = 2**(J-3)
-    dtype_np = np.float64 if precision == 'double' else np.float32
-    mask_np = np.zeros((M, N), dtype=dtype_np)
-    mask_np[margin:M - margin, margin:N - margin] = 1.0
-    mask = torch.from_numpy(mask_np).to(device_torch).type(dtype)
 
     st_calc = Scattering2d(M, N, J, L, device, wavelets, l_oversampling=l_oversampling, frequency_factor=frequency_factor)
     def func(map1, ref_map1, map2=None, ref_map2=None):
-        map1 = map1 * mask
-        ref_map1 = ref_map1 * mask
-        if map2 is not None:
-            map2 = map2 * mask
-        if ref_map2 is not None:
-            ref_map2 = ref_map2 * mask
         coef_list = []
         # Two-field case
         st_calc.add_ref_ab(ref_a=ref_map1, ref_b=ref_map2)
@@ -432,7 +379,6 @@ Use * or + to connect more than one condition.
                 COEFFS.append(stats)
         COEFFS = torch.stack(COEFFS, dim=0)  # Shape: (Mn, N_coeffs)
         std_dev = COEFFS.std(dim=0, unbiased=False)
-        torch.cuda.empty_cache()
         return std_dev
 
     # Generate std_func_dual for all unique pairs
@@ -444,110 +390,8 @@ Use * or + to connect more than one condition.
         stds.append(std_ij)
     return tuple(stds)
 
-def compute_std_sc(
-    image, contamination_arr, image_ref=None, s_cov_func = None, 
-    J=None, L=4, M=None, N=None, l_oversampling=1, frequency_factor=1,
-    device='gpu', wavelets='morlet', seed=None,
-    if_large_batch=False,
-    C11_criteria=None,
-    normalization='P00',
-    precision='single',
-    remove_edge=False,
-    ):
-
-    dtype = torch.double if precision == 'double' else torch.float
-
-    device_torch = torch.device('cuda' if device == 'gpu' else 'cpu')
-
-
-    if not torch.cuda.is_available(): device='cpu'
-    np.random.seed(seed)
-    C11_criteria = 'j2>=j1'
-    _, M, N = image[0].shape
-    
-    J = int(np.log2(min(M,N))) - 1 
-
-    image_ref = image if image_ref is None else image_ref
-    # Insert assertion after image_ref assignment
-    assert contamination_arr.shape[1] == len(image), \
-        f"Number of image channels ({len(image)}) does not match contamination channels ({contamination_arr.shape[1]})"
-
-    if s_cov_func is None: 
-        def func_s(x1, x2):
-                coeff_dict = st_calc.scattering_cov_2fields_partial(
-                    x1, x2, use_ref=True, if_large_batch=if_large_batch, C11_criteria=C11_criteria,
-                    normalization=normalization, remove_edge=remove_edge
-                )
-                return coeff_dict['for_synthesis']
-    else:
-        def func_s(x1, x2):
-                coeff_dict = st_calc.scattering_cov_2fields_partial(
-                    x1, x2, use_ref=True, if_large_batch=if_large_batch, C11_criteria=C11_criteria,
-                    normalization=normalization, remove_edge=remove_edge
-                )
-                return s_cov_func(coeff_dict)
-        
-
-    margin = 2**(J-3)
-    dtype_np = np.float64 if precision == 'double' else np.float32
-    mask_np = np.zeros((M, N), dtype=dtype_np)
-    mask_np[margin:M - margin, margin:N - margin] = 1.0
-    mask = torch.from_numpy(mask_np).to(device_torch).type(dtype)
-
-    st_calc = Scattering2d(M, N, J, L, device, wavelets, l_oversampling=l_oversampling, frequency_factor=frequency_factor)    
-    def func(map1, ref_map1, map2=None, ref_map2=None):
-        map1 = map1 * mask
-        ref_map1 = ref_map1 * mask
-        if map2 is not None:
-            map2 = map2 * mask
-        if ref_map2 is not None:
-            ref_map2 = ref_map2 * mask
-        coef_list = []
-        # Two-field case
-        st_calc.add_ref_ab(ref_a=ref_map1, ref_b=ref_map2)
-        coef_list.append(func_s(map1, map2))
-        return torch.cat(coef_list, axis=-1)
-
-    def std_func_dual(x1, ref1, contamination_arr_pair, Mn=10, batch_size=5):
-        # Convert inputs to torch tensors if needed
-        x1 = torch.from_numpy(x1) if isinstance(x1, np.ndarray) else x1
-        ref1 = torch.from_numpy(ref1) if isinstance(ref1, np.ndarray) else ref1
-        # Set dtype and device
-        dtype = torch.double if precision == 'double' else torch.float
-        device_torch = torch.device('cuda' if device == 'gpu' else 'cpu')
-        x1 = x1.to(device=device_torch, dtype=dtype)
-        ref1 = ref1.to(device=device_torch, dtype=dtype)
-        contamination_tensor = torch.from_numpy(contamination_arr_pair).to(device=device_torch, dtype=dtype)
-        # Extract contamination for both inputs
-        cont = contamination_tensor  # Shape: (Mn, 1, H, W)
-        # Split into batches
-        batch_number = (Mn + batch_size - 1) // batch_size
-        COEFFS = []
-        for i in range(batch_number):
-            start_idx = i * batch_size
-            end_idx = min((i + 1) * batch_size, Mn)
-            x1_noisy_batch = x1.unsqueeze(0).expand(end_idx - start_idx, -1, -1, -1)
-            x2_noisy_batch = cont[start_idx:end_idx]
-            for j in range(end_idx - start_idx):
-                stats = func(x1_noisy_batch[j], ref1, x2_noisy_batch[j], ref1).squeeze(0)
-                COEFFS.append(stats)
-        COEFFS = torch.stack(COEFFS, dim=0)  # Shape: (Mn, N_coeffs)
-        std_dev = COEFFS.std(dim=0, unbiased=False)
-        mean = COEFFS.mean(dim=0)
-        torch.cuda.empty_cache()
-        return mean, std_dev
-
-    # Generate std_func_dual for all unique pairs
-    from itertools import combinations
-    stds = []
-    for i in range(len(image)):
-        mean_ii, std_ii = std_func_dual(image[i], image_ref[i], contamination_arr[:, i])
-        stds.append((mean_ii, std_ii))
-    return tuple(stds)
- 
-
 def denoise(
-    target, contamination_arr, fixed_img, std, image_init = None, epochNo = None, n_batch = 10, s_cov_func = None, s_cov_func_2fields = None,
+    target, contamination_arr = None, fixed_img = None, std = None, image_init = None, epochNo = None, n_batch = 10, s_cov_func = None, s_cov_func_2fields = None,
     J=None, L=4, M=None, N=None, l_oversampling=1, frequency_factor=1, optim_algorithm='LBFGS', steps=300, learning_rate=0.2,
     device='gpu', wavelets='morlet', seed=None,
     if_large_batch=False,
@@ -556,7 +400,8 @@ def denoise(
     precision='single',
     print_each_step=False,
     pseudo_coef=1,
-    remove_edge=False
+    remove_edge=False,
+    mode = 'compsep'
 ):
     '''
     the estimator_name can be 's_mean', 's_mean_iso', 's_cov', 's_cov_iso', 'alpha_cov', 
@@ -567,9 +412,6 @@ def denoise(
     np.random.seed(seed)
     if C11_criteria is None:
         C11_criteria = 'j2>=j1'
-
-    device_torch = torch.device('cuda' if device == 'gpu' else 'cpu')
-
         
     if isinstance(target, tuple):
         _, M, N = target[0].shape
@@ -582,8 +424,6 @@ def denoise(
         
     if J is None:
         J = int(np.log2(min(M,N))) - 1
-
-    dtype = torch.double if precision == 'double' else torch.float
     
     st_calc = Scattering2d(M, N, J, L, device, wavelets, l_oversampling=l_oversampling, frequency_factor=frequency_factor)
 
@@ -633,87 +473,67 @@ def denoise(
 
         return torch.cat(coef_list, axis=-1)
     
-    def func_partial(map1, ref_map1, map2, ref_map2):
-        coef_list = []
-        # Two-field case
-        st_calc.add_ref_ab(ref_a=ref_map1, ref_b=ref_map2)
-        if s_cov_func_2fields is None:
-            def func_s(x1, x2):
-                coeff_dict = st_calc.scattering_cov_2fields_partial(
-                    x1, x2, use_ref=True, if_large_batch=if_large_batch, C11_criteria=C11_criteria,
-                    normalization=normalization, remove_edge=remove_edge
-                )
-                return coeff_dict['for_synthesis']
-        else:
-            def func_s(x1, x2):
-                coeff_dict = st_calc.scattering_cov_2fields_partial(
-                    x1, x2, use_ref=True, if_large_batch=if_large_batch, C11_criteria=C11_criteria,
-                    normalization=normalization, remove_edge=remove_edge
-                )
-                return s_cov_func_2fields(coeff_dict)
-                
-        
-        coef_list.append(func_s(map1, map2))
+    if mode == 'compsep':            
+        def loss_func(*args):
+            assert len(args) % 2 == 0, "Expecting equal number of targets and images"
+            mid = len(args) // 2
+            targets, images = args[:mid], args[mid:]
 
-        return torch.cat(coef_list, axis=-1)
-    
-    margin = 2**(J-3)
-    dtype_np = np.float64 if precision == 'double' else np.float32
-    mask_np = np.zeros((M, N), dtype=dtype_np)
-    mask_np[margin:M - margin, margin:N - margin] = 1.0
-    mask = torch.from_numpy(mask_np).to(device_torch).type(dtype)
-    
-    def loss_func(*args):
-        assert len(args) % 2 == 0, "Expecting equal number of targets and images"
-        mid = len(args) // 2
-        targets, images = args[:mid], args[mid:]
+            std_single = std['single']
+            std_partial = std['partial']
+            std_double = std['double'][0]
+            mean_std = std['noise_mean_std']
 
-        std_single = std['single']
+            if epochNo is None or epochNo % 2 == 0:
+                loss_terms = [
+                    loss_func_single(targets[0], images[0], std_single[0], contamination_arr[:, 0]),
+                    loss_func_single(targets[1], images[1], std_single[1], contamination_arr[:, 1]),
+                    loss_func_partial(targets[0], images[0], fixed_img, std_partial[0], contamination_arr[:, 0]),
+                    loss_func_partial(targets[0], images[0], fixed_img, std_partial[1], contamination_arr[:, 1]),
+                    loss_func_double(targets[0], images[0], targets[1], images[1], std_double, contamination_arr),
+                    # loss_func_CC(targets[0], images[0], mean_std[0]),
+                    # loss_func_CC(targets[1], images[1], mean_std[1])
+                ]
+            else:
+                loss_terms = [
+                    loss_func_single(targets[0], images[0], std_single[0], contamination_arr[:, 0]),
+                    loss_func_single(targets[1], images[1], std_single[1], contamination_arr[:, 1]),
+                    loss_func_partial(targets[0], images[0], fixed_img, std_partial[0], contamination_arr[:, 0]),
+                    loss_func_partial(targets[0], images[0], fixed_img, std_partial[1], contamination_arr[:, 1]),
+                    loss_func_double(targets[0], images[0], targets[1], images[1], std_double, contamination_arr),
+                    loss_func_CC(targets[0], images[0], mean_std[0]),
+                    loss_func_CC(targets[1], images[1], mean_std[1])
+                ]
 
-        loss_terms = [
-            loss_func_single(targets[0], images[0], std_single[0], contamination_arr[:, 0]),
-            loss_func_single(targets[1], images[1], std_single[1], contamination_arr[:, 1])        
+            return sum(loss_terms) / len(loss_terms)
+    else:
+        def loss_func(*args):
+            assert len(args) % 2 == 0, "Expecting equal number of targets and images"
+            mid = len(args) // 2
+            targets, images = args[:mid], args[mid:]
+
+            loss_terms = [                
+                loss_func_single(targets[0], images[0]),
+                loss_func_single(targets[1], images[1]),
+                loss_func_double(targets[0], images[0], targets[1], images[1]),
+                loss_func_partial(targets[0], images[0], fixed_img),
+                loss_func_partial(targets[1], images[1], fixed_img)
             ]
-        
-        return sum(loss_terms) / len(loss_terms)
-        
+
+            return sum(loss_terms) / len(loss_terms)
+
+    
     # def loss_func(*args):
     #     assert len(args) % 2 == 0, "Expecting equal number of targets and images"
     #     mid = len(args) // 2
-    #     targets, images = args[:mid], args[mid:]
+    #     targets = args[:mid]
+    #     images = args[mid:]
 
-    #     targets = tuple(t * mask for t in targets)
-    #     images = tuple(i * mask for i in images)
+    #     loss1 = loss_func_single(targets[0], images[0], std[0], contamination_arr[:, 0])
+    #     loss2 = loss_func_single(targets[1], images[1], std[1], contamination_arr[:, 1])
+    #     loss3 = loss_func_double(targets[0], images[0], targets[1], images[1], contamination_arr)
 
-    #     std_single = std['single']
-    #     std_partial = std['partial']
-    #     std_double = std['double'][0]
-    #     mean_std = std['noise_mean_std']
-    #     mean_std_DC = std['sc']
-
-    #     if epochNo is None or epochNo % 2 == 0:
-    #         loss_terms = [
-    #             loss_func_single(targets[0], images[0], std_single[0], contamination_arr[:, 0]),
-    #             loss_func_single(targets[1], images[1], std_single[1], contamination_arr[:, 1]),
-    #             loss_func_partial(targets[0], images[0], fixed_img, std_partial[0], contamination_arr[:, 0]),
-    #             loss_func_partial(targets[1], images[1], fixed_img, std_partial[1], contamination_arr[:, 1]),
-    #             loss_func_double(targets[0], images[0], targets[1], images[1], std_double, contamination_arr)
-    #         ]
-    #     else:
-    #         loss_terms = [
-    #             loss_func_single(targets[0], images[0], std_single[0], contamination_arr[:, 0]),
-    #             loss_func_single(targets[1], images[1], std_single[1], contamination_arr[:, 1]),
-    #             loss_func_partial(targets[0], images[0], fixed_img, std_partial[0], contamination_arr[:, 0]),
-    #             loss_func_partial(targets[1], images[1], fixed_img, std_partial[1], contamination_arr[:, 1]),
-    #             loss_func_double(targets[0], images[0], targets[1], images[1], std_double, contamination_arr),
-    #             loss_func_CC(targets[0], images[0], mean_std[0]),
-    #             loss_func_CC(targets[1], images[1], mean_std[1]),
-    #             loss_func_DC(targets[0], images[0], mean_std_DC[0]),
-    #             loss_func_DC(targets[1], images[1], mean_std_DC[1])
-    #         ]
-
-    #     return sum(loss_terms) / len(loss_terms)
-
+    #     return (loss1 + loss2 + loss3) / 3
 
     # def loss_func(*args):
     #     *targets, image = args
@@ -735,71 +555,100 @@ def denoise(
 
     #     return (loss1 + loss2 + loss3) / 3
 
-    def loss_func_single(target, image, _std, contamination_arr):
-        indices = np.random.choice(contamination_arr.shape[0], size=n_batch, replace=False)
-        contamination_arr = contamination_arr[indices]
-        # Convert to torch if needed
-        if isinstance(contamination_arr, np.ndarray):
-            contamination_arr = torch.from_numpy(contamination_arr)
-
-        # Move contamination to correct device/dtype
+    def loss_func_single(target, image, _std = None, contamination_arr = None):
         dtype = torch.double if precision == 'double' else torch.float
-        contamination_tensor = contamination_arr.to(device=image.device, dtype=dtype)
 
-        # Step 1: Compute reference statistics
-        target_stats = func(target, target).squeeze(0)  # Shape: (N_coeffs,)
+        if contamination_arr is not None and _std is not None:
+            indices = np.random.choice(contamination_arr.shape[0], size=n_batch, replace=False)
+            contamination_arr = contamination_arr[indices]
+            # Convert to torch if needed
+            if isinstance(contamination_arr, np.ndarray):
+                contamination_arr = torch.from_numpy(contamination_arr)
 
-        # Step 2: Add contamination
-        cont_images = image.unsqueeze(0) + contamination_tensor  # (n_realizations, 1, H, W)
+            # Move contamination to correct device/dtype
+            dtype = torch.double if precision == 'double' else torch.float
+            contamination_tensor = contamination_arr.to(device=image.device, dtype=dtype)
 
-        # Step 3: Compute noisy statistics in a batched way
-        noisy_stats_tensor = func(cont_images[:, 0], target)  # Shape: (n_realizations, N_coeffs)
+            # Step 1: Compute reference statistics
+            target_stats = func(target, target).squeeze(0)  # Shape: (N_coeffs,)
 
-        # Step 4: Normalize and compute squared norm
-        diff = noisy_stats_tensor - target_stats[None, :]
-        normalized_diff = diff / _std[None, :]
-        squared_norms = torch.sum(normalized_diff ** 2, dim=-1) / normalized_diff.size(-1)
+            # Step 2: Add contamination
+            cont_images = image.unsqueeze(0) + contamination_tensor  # (n_realizations, 1, H, W)
 
+            # Step 3: Compute noisy statistics in a batched way
+            noisy_stats_tensor = func(cont_images[:, 0], target)  # Shape: (n_realizations, N_coeffs)
+
+            # Step 4: Normalize and compute squared norm
+            diff = noisy_stats_tensor - target_stats[None, :]
+            normalized_diff = diff / _std[None, :]
+            squared_norms = torch.sum(normalized_diff ** 2, dim=-1) / normalized_diff.size(-1)
+        else:
+            # Step 1: Compute reference statistics and running statistics, ensure shape and dtype
+            target_stats = func(target, target).squeeze(0).to(dtype=dtype)
+            running_stats = func(image, target).squeeze(0).to(dtype=dtype)
+            diff = running_stats - target_stats
+            squared_norms = torch.sum(diff ** 2, dim=-1) / diff.size(-1)
+            
         return squared_norms.mean()
     
-    def loss_func_partial(target, image, fixed_img, _std, contamination_arr):
-        indices = np.random.choice(contamination_arr.shape[0], size=n_batch, replace=False)
-        contamination_arr = contamination_arr[indices]
-        # Convert to torch if needed
-        if isinstance(contamination_arr, np.ndarray):
-            contamination_arr = torch.from_numpy(contamination_arr)
-
-        # Move contamination to correct device/dtype
+    def loss_func_partial(target, image, fixed_img, _std=None, contamination_arr=None):
         dtype = torch.double if precision == 'double' else torch.float
-        contamination_tensor = contamination_arr.to(device=image.device, dtype=dtype)
 
-        # Step 1: Compute reference statistics
-        target_stats = func_partial(target, target, fixed_img, fixed_img).squeeze(0)  # Shape: (N_coeffs,)
-
-        # Step 2: Add contamination
-        cont_images = image.unsqueeze(0) + contamination_tensor  # (n_realizations, 1, H, W)
-
-        # Prepare fixed batch (same shape, no contamination)
+        # Convert inputs to torch if necessary
+        target = torch.from_numpy(target) if isinstance(target, np.ndarray) else target
+        image = torch.from_numpy(image) if isinstance(image, np.ndarray) else image
         fixed_tensor = torch.from_numpy(fixed_img) if isinstance(fixed_img, np.ndarray) else fixed_img
-        fixed_tensor = fixed_tensor.to(device=image.device, dtype=dtype)
-        fixed_batch = fixed_tensor.unsqueeze(0) + torch.zeros_like(contamination_tensor)
 
-        # Step 3: Compute noisy statistics in a batched way
-        noisy_stats_tensor = func_partial(cont_images[:, 0], target, fixed_batch[:, 0], fixed_img)  # Shape: (n_realizations, N_coeffs)
+        # Move to correct device and dtype
+        device = image.device
+        target = target.to(device=device, dtype=dtype)
+        image = image.to(device=device, dtype=dtype)
+        fixed_tensor = fixed_tensor.to(device=device, dtype=dtype)
 
-        # Step 4: Normalize and compute squared norm
-        diff = noisy_stats_tensor - target_stats[None, :]
-        valid_mask = _std != 0
-        std = _std[valid_mask]
-        diff = diff[:, valid_mask]
-        normalized_diff = diff / std[None, :]
-        squared_norms = torch.sum(normalized_diff ** 2, dim=-1) / normalized_diff.size(-1)
+        if contamination_arr is not None and _std is not None:
+            indices = np.random.choice(contamination_arr.shape[0], size=n_batch, replace=False)
+            contamination_arr = contamination_arr[indices]
 
-        return squared_norms.mean()
+            if isinstance(contamination_arr, np.ndarray):
+                contamination_arr = torch.from_numpy(contamination_arr)
 
-    def loss_func_double(target1, image1, target2, image2, std_double, contamination_arr):
+            contamination_tensor = contamination_arr.to(device=device, dtype=dtype)
+            _std = _std.to(device=device, dtype=dtype)
+
+            # Step 1: Compute reference statistics
+            target_stats = func(target, target, fixed_tensor, fixed_tensor).squeeze(0)
+
+            # Step 2: Add contamination
+            cont_images = image.unsqueeze(0) + contamination_tensor
+            fixed_batch = fixed_tensor.unsqueeze(0) + torch.zeros_like(contamination_tensor)
+
+            # Step 3: Compute noisy statistics
+            noisy_stats_tensor = func(cont_images[:, 0], target, fixed_batch[:, 0], fixed_tensor)
+
+            # Step 4: Normalize and compute squared norm
+            diff = noisy_stats_tensor - target_stats[None, :]
+            valid_mask = _std != 0
+            diff = diff[:, valid_mask]
+            std = _std[valid_mask]
+            normalized_diff = diff / std[None, :]
+            squared_norms = torch.sum(normalized_diff ** 2, dim=-1) / normalized_diff.size(-1)
+
+            return squared_norms.mean()
+            
+        else:
+            # Simple unnormalized squared loss
+            target_stats = func(target, target, fixed_tensor, fixed_tensor).squeeze(0).to(dtype=dtype)
+            running_stats = func(image, target, fixed_tensor, fixed_tensor).squeeze(0).to(dtype=dtype)
+            diff = running_stats - target_stats
+            squared_norms = torch.sum(diff ** 2, dim=-1) / diff.size(-1)
+
+            return squared_norms.mean()
+
+    
+    def loss_func_double(target1, image1, target2, image2, std_double=None, contamination_arr=None):
         """
-        Computes the BR loss for dual-input using precomputed contamination.
+        Computes the BR loss for dual-input. If contamination and std are provided,
+        it adds noise and normalizes. If not, computes direct diff between stats.
 
         Parameters
         ----------
@@ -807,7 +656,9 @@ def denoise(
             First frequency target and input (shape: (1, H, W)).
         target2, image2 : torch.Tensor
             Second frequency target and input (shape: (1, H, W)).
-        contamination_arr : np.ndarray or torch.Tensor
+        std_double : torch.Tensor or None
+            Standard deviation for normalization.
+        contamination_arr : np.ndarray or torch.Tensor or None
             Contamination array of shape (n_realizations, 2, 1, H, W).
 
         Returns
@@ -816,74 +667,80 @@ def denoise(
             Scalar loss value.
         """
 
-        indices = np.random.choice(contamination_arr.shape[0], size=n_batch, replace=False)
-        contamination_arr = contamination_arr[indices]
-
-        if isinstance(contamination_arr, np.ndarray):
-            contamination_arr = torch.from_numpy(contamination_arr)
-
         dtype = torch.double if precision == 'double' else torch.float
-        contamination_tensor = contamination_arr.to(device=image1.device, dtype=dtype)
 
-        cont1 = contamination_tensor[:, 0]  # (n_realizations, 1, H, W)
-        cont2 = contamination_tensor[:, 1]  # (n_realizations, 1, H, W)
+        if contamination_arr is not None and std_double is not None:
+            indices = np.random.choice(contamination_arr.shape[0], size=n_batch, replace=False)
+            contamination_arr = contamination_arr[indices]
 
-        # Step 1: Reference statistics
-        target_stats = func(target1, target1, target2, target2).squeeze(0)  # (N_coeffs,)
+            if isinstance(contamination_arr, np.ndarray):
+                contamination_arr = torch.from_numpy(contamination_arr)
 
-        # Step 2: Add contamination
-        cont_images1 = image1.unsqueeze(0) + cont1  # (n_realizations, 1, H, W)
-        cont_images2 = image2.unsqueeze(0) + cont2  # (n_realizations, 1, H, W)
+            contamination_tensor = contamination_arr.to(device=image1.device, dtype=dtype)
+            std_double = std_double.to(device=image1.device, dtype=dtype)
 
-        # Step 3: Compute noisy statistics in batched mode
-        # Assume func supports batched inputs: (B, 1, H, W), (1, H, W), (B, 1, H, W), (1, H, W)
-        # Output: (B, N_coeffs)
-        noisy_stats_tensor = func(cont_images1[:, 0], target1, cont_images2[:, 0], target2)  # (n_realizations, N_coeffs)
+            cont1 = contamination_tensor[:, 0]
+            cont2 = contamination_tensor[:, 1]
 
-        # Step 4: Normalize and compute loss
-        diff = noisy_stats_tensor - target_stats[None, :]
-        normalized_diff = diff / std_double[None, :]
-        squared_norms = torch.sum(normalized_diff ** 2, dim=-1) / normalized_diff.size(-1)
+            # Step 1: Reference statistics
+            target_stats = func(target1, target1, target2, target2).squeeze(0).to(dtype=dtype)
+
+            # Step 2: Add contamination
+            cont_images1 = image1.unsqueeze(0) + cont1
+            cont_images2 = image2.unsqueeze(0) + cont2
+
+            # Step 3: Compute noisy statistics
+            noisy_stats_tensor = func(cont_images1[:, 0], target1, cont_images2[:, 0], target2).to(dtype=dtype)
+
+            # Step 4: Normalize and compute loss
+            diff = noisy_stats_tensor - target_stats[None, :]
+            normalized_diff = diff / std_double[None, :]
+            squared_norms = torch.sum(normalized_diff ** 2, dim=-1) / normalized_diff.size(-1)
+
+        else:
+            # No contamination: direct comparison of stats
+            target_stats = func(target1, target1, target2, target2).squeeze(0).to(dtype=dtype)
+            running_stats = func(image1, target1, image2, target2).squeeze(0).to(dtype=dtype)
+
+            diff = running_stats - target_stats
+            squared_norms = torch.sum(diff ** 2, dim=-1) / diff.size(-1)
 
         return squared_norms.mean()
         
-    def loss_func_CC(target, image, mean_std):
-
-        # Move contamination to correct device/dtype
+    def loss_func_CC(target, image, mean_std=None):
         dtype = torch.double if precision == 'double' else torch.float
 
-        target_stats, std = mean_std
-        target_stats = target_stats.squeeze(0)
+        if mean_std is not None:
+            target_stats, std = mean_std
+            target_stats = target_stats.squeeze(0)
 
-        noisy_stats_tensor = func(target - image, target)  # Shape: (n_realizations, N_coeffs)
+            noisy_stats_tensor = func(target - image, target)
 
-        # Step 4: Normalize and compute squared norm
-        diff = noisy_stats_tensor - target_stats[None, :]
-        normalized_diff = diff / std[None, :]
-        squared_norms = torch.sum(normalized_diff ** 2, dim=-1) / normalized_diff.size(-1)
+            diff = noisy_stats_tensor - target_stats[None, :]
+            normalized_diff = diff / std[None, :]
+            squared_norms = torch.sum(normalized_diff ** 2, dim=-1) / normalized_diff.size(-1)
 
-        mean_val = squared_norms.mean()
-        if torch.isnan(mean_val):
-            return torch.tensor(0.0, device=squared_norms.device, dtype=squared_norms.dtype)
-        return mean_val
+            mean_val = squared_norms.mean()
+            if torch.isnan(mean_val):
+                return torch.tensor(0.0, device=squared_norms.device, dtype=squared_norms.dtype)
+            return mean_val
+        else:
+            data = fixed_img  # <-- assumes `fixed_img` is accessible from outer scope
+            data = torch.from_numpy(data) if isinstance(data, np.ndarray) else data
+            device = image.device
+
+            data = data.to(device=device, dtype=dtype)
+            target = target.to(device=device, dtype=dtype)
+            image = image.to(device=device, dtype=dtype)
+
+            ref_stats = func(data - target, target).squeeze(0)
+            run_stats = func(data - image, target).squeeze(0)
+
+            diff = run_stats - ref_stats
+            squared_norms = torch.sum(diff ** 2, dim=-1) / diff.size(-1)
+
+            return squared_norms.mean()
     # return squared_norms.mean()
-
-    def loss_func_DC(target, image, mean_std):
-
-        stats_tensor = func_partial(image, target, target - image, target)  # (n_realizations, N_coeffs)
-        mean = mean_std[0]
-        std = mean_std[1]
-
-        diff = stats_tensor - mean[None, :]
-
-        valid_mask = std != 0
-        std = std[valid_mask]
-
-        diff = diff[:, valid_mask]
-        normalized_diff = diff / std[None, :]
-        squared_norms = torch.sum(normalized_diff ** 2, dim=-1) / normalized_diff.size(-1)
-
-        return squared_norms.mean()
 
     image_syn = denoise_general(
     target, image_init, func, loss_func,  
@@ -967,7 +824,6 @@ def denoise_general(
 
         # Backpropagate the loss
         loss.backward()
-        torch.cuda.empty_cache()  # Free unused cached memory
         return loss
     
     # Perform optimization
@@ -980,12 +836,8 @@ def denoise_general(
     t_end = time.time()
     print('Time used: ', t_end - t_start, 's')
 
-    # Cleanup model and empty CUDA cache
-    del image_model
-    torch.cuda.empty_cache()
-
     # Return the optimized images as numpy arrays
-    return tuple(img.cpu().detach().numpy() for img in image_inits)
+    return tuple(img.cpu().detach().numpy() for img in image_model.get_images())
 
 
 def scale_annotation_a_b(idx_info):
