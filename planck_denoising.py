@@ -56,7 +56,7 @@ contamination_arr = np.stack([contamination_arr_Q, contamination_arr_U], axis=1)
 
 image_target = (signal_Q, signal_U)
 threshold_func = None
-remove_edge = False
+remove_edge = True
 
 std = {
     'single': denoising.compute_std(image_target, contamination_arr=contamination_arr,
@@ -65,8 +65,8 @@ std = {
     'partial': denoising.compute_std_partial(image_target, contamination_arr, signal_I,
                                            remove_edge=remove_edge, precision='double'),                               
 
-    'double': denoising.compute_std_double(image_target, contamination_arr=contamination_arr,
-                                           remove_edge=remove_edge, precision='double'),
+    # 'double': denoising.compute_std_double(image_target, contamination_arr=contamination_arr,
+    #                                        remove_edge=remove_edge, precision='double'),
 
     'noise_mean_std': denoising.noise_mean_std(contamination_arr, remove_edge=remove_edge, precision='double')
 }
@@ -74,12 +74,15 @@ std = {
 image_init = image_target
 
 n_epochs = 4 #number of epochs
+loss_arr = []
 # decontaminate
 for i in range(n_epochs):
     print(f'Starting epoch {i+1}')
-    running_map = denoising.denoise(image_target, contamination_arr = contamination_arr, fixed_img=signal_I, std = std, seed=0, print_each_step=True, 
-                                    steps = 35, n_batch = 25, s_cov_func=threshold_func, image_init = image_init, remove_edge=remove_edge, precision='double', 
+    running_map, loss = denoising.denoise(image_target, contamination_arr = contamination_arr, fixed_img=signal_I, std = std, seed=0, print_each_step=True, 
+                                    steps = 40, n_batch = 50, s_cov_func=threshold_func, image_init = image_init, remove_edge=remove_edge, precision='double', 
                                     if_large_batch=False, epochNo = i)
+    loss_arr.append(loss)
+    
     running_map = (running_map[0], running_map[1])
     image_init = running_map
     torch.cuda.empty_cache()
@@ -93,14 +96,14 @@ for i in range(n_epochs):
             'partial': denoising.compute_std_partial(running_map, contamination_arr, signal_I,
                                                 remove_edge=remove_edge, precision='double'),                               
 
-            'double': denoising.compute_std_double(running_map, contamination_arr=contamination_arr,
-                                                remove_edge=remove_edge, precision='double'),
+            # 'double': denoising.compute_std_double(running_map, contamination_arr=contamination_arr,
+            #                                     remove_edge=remove_edge, precision='double'),
 
             'noise_mean_std': std['noise_mean_std']
             }
         image_init = image_target
         
-    np.save(f"image_denoised_patch_{patch}_iter={i}.npy",  np.stack([running_map[0][0], running_map[1][0]]))
+    # np.save(f"image_denoised_patch_{patch}_iter={i}.npy",  np.stack([running_map[0][0], running_map[1][0]]))
 
 image_syn_Q = running_map[0]
 image_syn_U = running_map[1]
@@ -109,4 +112,5 @@ image_syn_U = running_map[1]
 image_denoised = np.stack([image_syn_Q[0], image_syn_U[0]])  # Ensure it's an array
 
 # Save results
-np.save(f"image_denoised_patch_{patch}.npy", image_denoised)
+np.save(f"image_denoised_patch_{patch}_removeEdge={remove_edge}.npy", image_denoised)
+np.save(f"loss_{patch}_removeEdge={remove_edge}.npy", loss_arr)

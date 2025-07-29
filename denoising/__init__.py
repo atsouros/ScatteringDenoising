@@ -52,7 +52,7 @@ Use * or + to connect more than one condition.
         J = int(np.log2(min(M,N))) - 1
     
     # define calculator and estimator function
-    st_calc = Scattering2d(M, N, J, L, device, wavelets, l_oversampling=l_oversampling, frequency_factor=frequency_factor)
+    st_calc = Scattering2d(M, N, J, L, device, wavelets, l_oversampling=l_oversampling, frequency_factor=frequency_factor, remove_edge = remove_edge)
 
     if s_cov_func is None:
         def func_s(x):
@@ -146,7 +146,7 @@ def noise_mean_std(
     if J is None:
         J = int(np.log2(min(M, N))) - 1
 
-    st_calc = Scattering2d(M, N, J, L, device, wavelets, l_oversampling=l_oversampling, frequency_factor=frequency_factor)
+    st_calc = Scattering2d(M, N, J, L, device, wavelets, l_oversampling=l_oversampling, frequency_factor=frequency_factor, remove_edge = remove_edge)
 
     if s_cov_func is None:
         def func_s(x):
@@ -253,7 +253,7 @@ Use * or + to connect more than one condition.
                 )
                 return s_cov_func(coeff_dict)
 
-    st_calc = Scattering2d(M, N, J, L, device, wavelets, l_oversampling=l_oversampling, frequency_factor=frequency_factor)
+    st_calc = Scattering2d(M, N, J, L, device, wavelets, l_oversampling=l_oversampling, frequency_factor=frequency_factor, remove_edge = remove_edge)
     def func(image):
         coef_list = []
         coef_list.append(func_s(image))
@@ -341,7 +341,7 @@ Use * or + to connect more than one condition.
                 )
                 return s_cov_func(coeff_dict)
 
-    st_calc = Scattering2d(M, N, J, L, device, wavelets, l_oversampling=l_oversampling, frequency_factor=frequency_factor)
+    st_calc = Scattering2d(M, N, J, L, device, wavelets, l_oversampling=l_oversampling, frequency_factor=frequency_factor, remove_edge = remove_edge)
     def func(map1, ref_map1, map2=None, ref_map2=None):
         coef_list = []
         # Two-field case
@@ -425,7 +425,7 @@ def denoise(
     if J is None:
         J = int(np.log2(min(M,N))) - 1
     
-    st_calc = Scattering2d(M, N, J, L, device, wavelets, l_oversampling=l_oversampling, frequency_factor=frequency_factor)
+    st_calc = Scattering2d(M, N, J, L, device, wavelets, l_oversampling=l_oversampling, frequency_factor=frequency_factor, remove_edge = remove_edge)
 
     def func(map1, ref_map1, map2=None, ref_map2=None):
         coef_list = []
@@ -481,7 +481,7 @@ def denoise(
 
             std_single = std['single']
             std_partial = std['partial']
-            std_double = std['double'][0]
+            # std_double = std['double'][0]
             mean_std = std['noise_mean_std']
 
             if epochNo is None or epochNo % 2 == 0:
@@ -490,7 +490,7 @@ def denoise(
                     loss_func_single(targets[1], images[1], std_single[1], contamination_arr[:, 1]),
                     loss_func_partial(targets[0], images[0], fixed_img, std_partial[0], contamination_arr[:, 0]),
                     loss_func_partial(targets[0], images[0], fixed_img, std_partial[1], contamination_arr[:, 1]),
-                    loss_func_double(targets[0], images[0], targets[1], images[1], std_double, contamination_arr),
+                    # loss_func_double(targets[0], images[0], targets[1], images[1], std_double, contamination_arr),
                     # loss_func_CC(targets[0], images[0], mean_std[0]),
                     # loss_func_CC(targets[1], images[1], mean_std[1])
                 ]
@@ -500,28 +500,25 @@ def denoise(
                     loss_func_single(targets[1], images[1], std_single[1], contamination_arr[:, 1]),
                     loss_func_partial(targets[0], images[0], fixed_img, std_partial[0], contamination_arr[:, 0]),
                     loss_func_partial(targets[0], images[0], fixed_img, std_partial[1], contamination_arr[:, 1]),
-                    loss_func_double(targets[0], images[0], targets[1], images[1], std_double, contamination_arr),
+                    # loss_func_double(targets[0], images[0], targets[1], images[1], std_double, contamination_arr),
                     loss_func_CC(targets[0], images[0], mean_std[0]),
                     loss_func_CC(targets[1], images[1], mean_std[1])
                 ]
-
             return sum(loss_terms) / len(loss_terms)
     else:
         def loss_func(*args):
             assert len(args) % 2 == 0, "Expecting equal number of targets and images"
             mid = len(args) // 2
-            targets, images = args[:mid], args[mid:]
+            targets = torch.stack(args[:mid])
+            images  = torch.stack(args[mid:])
 
-            loss_terms = [                
-                loss_func_single(targets[0], images[0]),
-                loss_func_single(targets[1], images[1]),
-                loss_func_double(targets[0], images[0], targets[1], images[1]),
-                loss_func_partial(targets[0], images[0], fixed_img),
-                loss_func_partial(targets[1], images[1], fixed_img)
+            loss_terms = [loss_func_single(targets[0], images[0]),
+                          loss_func_single(targets[1], images[1]),
+                          loss_func_double(targets[0], images[0], targets[1], images[1])
             ]
 
-            return sum(loss_terms) / len(loss_terms)
-
+            return sum(loss_terms) / len(loss_terms) * 1e1
+        
     
     # def loss_func(*args):
     #     assert len(args) % 2 == 0, "Expecting equal number of targets and images"
@@ -804,6 +801,7 @@ def denoise_general(
         history_size=min(steps // 2, 150), line_search_fn=None
     )
 
+    loss_arr = []
     # Define closure for LBFGS optimizer
     def closure():
         optimizer.zero_grad()
@@ -821,6 +819,7 @@ def denoise_general(
         # Print progress if required 
         if print_each_step:
             print(f'Current Loss: {loss.item():.2e}')
+        loss_arr.append(loss.item())
 
         # Backpropagate the loss
         loss.backward()
@@ -837,7 +836,7 @@ def denoise_general(
     print('Time used: ', t_end - t_start, 's')
 
     # Return the optimized images as numpy arrays
-    return tuple(img.cpu().detach().numpy() for img in image_model.get_images())
+    return tuple(img.cpu().detach().numpy() for img in image_model.get_images()), loss_arr
 
 
 def scale_annotation_a_b(idx_info):

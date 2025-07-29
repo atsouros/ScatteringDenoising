@@ -8,7 +8,7 @@ class Scattering2d(object):
         self, M, N, J, L=4, device='gpu', 
         wavelets='morlet', filters_set=None, weight=None, 
         precision='single', ref=None, ref_a=None, ref_b=None,
-        l_oversampling=1, frequency_factor=1
+        l_oversampling=1, frequency_factor=1, remove_edge = False,
     ):
         '''
         M: int (positive)
@@ -45,6 +45,8 @@ class Scattering2d(object):
         ref_a, ref_b: None or numpy array or torch tensor with size [N_image, M, N]
             the reference images used to normalized the 2-field scattering covariance.
         '''
+        self.remove_edge = remove_edge
+
         if not torch.cuda.is_available(): device='cpu'
         if filters_set is None:
             if wavelets in ['morlet', 'BS', 'gau', 'shannon']:
@@ -116,11 +118,11 @@ class Scattering2d(object):
             self.add_ref_ab(ref_a, ref_b)
     
     def add_ref(self, ref):
-        self.ref_scattering_cov = self.scattering_cov(ref)
+        self.ref_scattering_cov = self.scattering_cov(ref, remove_edge = self.remove_edge)
     
     def add_ref_ab(self, ref_a, ref_b):
         self.ref_scattering_cov_2fields = self.scattering_cov_2fields(
-                ref_a, ref_b, if_large_batch=True
+                ref_a, ref_b, if_large_batch=True, remove_edge = self.remove_edge
         )
     
     def add_synthesis_P00(self, P00=None, s_cov=None, if_iso=True):
@@ -680,11 +682,11 @@ class Scattering2d(object):
                 C01       = C01.cuda()
                 C11       = C11.cuda()
         
-        # calculate scattering fields
-        I1 = torch.fft.ifftn(
-            data_f[:,None,None,:,:] * filters_set[None,:J,:,:,:], dim=(-2,-1)
-        ).abs()
-        I1_f= torch.fft.fftn(I1, dim=(-2,-1))
+        # # calculate scattering fields
+        # I1 = torch.fft.ifftn(
+        #     data_f[:,None,None,:,:] * filters_set[None,:J,:,:,:], dim=(-2,-1)
+        # ).abs()
+        # I1_f= torch.fft.fftn(I1, dim=(-2,-1))
         
         #
         if remove_edge: 
@@ -692,8 +694,19 @@ class Scattering2d(object):
             edge_mask = edge_mask / edge_mask.mean((-2,-1))[:,:,None,None]
         else: 
             edge_mask = 1
-        P00 = (I1**2 * edge_mask).mean((-2,-1))
-        S1  = (I1 * edge_mask).mean((-2,-1))
+
+         # calculate scattering fields
+        I1 = torch.fft.ifftn(
+            data_f[:,None,None,:,:] * filters_set[None,:J,:,:,:], dim=(-2,-1)
+        ).abs() * edge_mask
+        I1_f= torch.fft.fftn(I1, dim=(-2,-1)) 
+
+        P00 = (I1**2).mean((-2,-1))
+        S1  = (I1).mean((-2,-1))
+        
+
+        # P00 = (I1**2 * edge_mask).mean((-2,-1))
+        # S1  = (I1 * edge_mask).mean((-2,-1))
 #         if get_variance:
 #             P00_sigma = (I1**2 * edge_mask).std((-2,-1))
 #             S1_sigma  = (I1 * edge_mask).std((-2,-1))
@@ -707,6 +720,7 @@ class Scattering2d(object):
             dx3, dy3 = self.get_dxdy(j3)
             I1_f_small = cut_high_k_off(I1_f[:,:j3+1], dx3, dy3) # Nimage, J, L, x, y
             data_f_small = cut_high_k_off(data_f, dx3, dy3)
+
             if remove_edge:
                 I1_small = torch.fft.ifftn(I1_f_small, dim=(-2,-1), norm='ortho')
                 data_small = torch.fft.ifftn(data_f_small, dim=(-2,-1), norm='ortho')
@@ -977,26 +991,28 @@ class Scattering2d(object):
             P11_b_iso = P11_b_iso.cuda()
             C11_iso   = C11_iso.cuda()
             Corr11_iso= Corr11_iso.cuda()
-        
-        # calculate scattering fields
-        I1_a = torch.fft.ifftn(
-            data_a_f[:,None,None,:,:] * filters_set[None,:J,:,:,:], dim=(-2,-1)
-        ).abs()
-        I1_b = torch.fft.ifftn(
-            data_b_f[:,None,None,:,:] * filters_set[None,:J,:,:,:], dim=(-2,-1)
-        ).abs()
-        I1_a_f = torch.fft.fftn(I1_a, dim=(-2,-1))
-        I1_b_f = torch.fft.fftn(I1_b, dim=(-2,-1))
 
-        #
         if remove_edge: 
             edge_mask = self.edge_masks[:,None,:,:]
             edge_mask = edge_mask / edge_mask.mean((-2,-1))[:,:,None,None]
         else: 
             edge_mask = 1
         
-        P00_a = (I1_a**2 * edge_mask).mean((-2,-1))
-        P00_b = (I1_b**2 * edge_mask).mean((-2,-1))
+        # calculate scattering fields
+        I1_a = torch.fft.ifftn(
+            data_a_f[:,None,None,:,:] * filters_set[None,:J,:,:,:], dim=(-2,-1)
+        ).abs() * edge_mask
+        I1_b = torch.fft.ifftn(
+            data_b_f[:,None,None,:,:] * filters_set[None,:J,:,:,:], dim=(-2,-1)
+        ).abs() * edge_mask
+        I1_a_f = torch.fft.fftn(I1_a, dim=(-2,-1))
+        I1_b_f = torch.fft.fftn(I1_b, dim=(-2,-1))
+
+        P00_a = (I1_a**2).mean((-2,-1))
+        P00_b = (I1_b**2).mean((-2,-1))
+   
+        # P00_a = (I1_a**2 * edge_mask).mean((-2,-1))
+        # P00_b = (I1_b**2 * edge_mask).mean((-2,-1))
         
         C00 = (
             (data_a_f * torch.conj(data_b_f))[:,None,None,:,:] * filters_set[None,:J,:,:,:]**2
@@ -1012,12 +1028,8 @@ class Scattering2d(object):
             I1_b_f_small = cut_high_k_off(I1_b_f, dx3, dy3)
             data_a_f_small = cut_high_k_off(data_a_f, dx3, dy3)
             data_b_f_small = cut_high_k_off(data_b_f, dx3, dy3)
-            if remove_edge:
-                I1_a_small = torch.fft.ifftn(I1_a_f_small, dim=(-2,-1), norm='ortho')
-                I1_b_small = torch.fft.ifftn(I1_b_f_small, dim=(-2,-1), norm='ortho')
-                data_a_small = torch.fft.ifftn(data_a_f_small, dim=(-2,-1), norm='ortho')
-                data_b_small = torch.fft.ifftn(data_b_f_small, dim=(-2,-1), norm='ortho')
             wavelet_f3 = cut_high_k_off(filters_set[j3], dx3, dy3)
+
             _, M3, N3 = wavelet_f3.shape
             wavelet_f3_squared = wavelet_f3**2
             edge_dx = min(int(2**(J-1)*dx3*2/M), dx3 // 2)
@@ -1370,19 +1382,26 @@ def cut_high_k_off(data_f, dx, dy):
 def get_edge_masks(M, N, J, d0=1):
     edge_masks = torch.empty((J, M, N))
     X, Y = torch.meshgrid(torch.arange(M), torch.arange(N), indexing='ij')
-    for j in range(J):
-        edge_dx = min(M//4, 2**(J-1)*d0)
-        edge_dy = min(N//4, 2**(J-1)*d0)
-        edge_masks[j] = (X>=edge_dx) * (X<=M-edge_dx) * (Y>=edge_dy) * (Y<=N-edge_dy)
+    # for j in range(J):
+    #     edge_dx = min(M//4, 2**(J-1)*d0)
+    #     edge_dy = min(N//4, 2**(J-1)*d0)
+    #     edge_masks[j] = (X>=edge_dx) * (X<=M-edge_dx) * (Y>=edge_dy) * (Y<=N-edge_dy)
+
+    edge_dx = min(M // 4, 2**(J - 1) * d0)
+    edge_dy = min(N // 4, 2**(J - 1) * d0)
+    mask = (X >= edge_dx) & (X <= M - edge_dx) & (Y >= edge_dy) & (Y <= N - edge_dy)
+    edge_masks[:] = mask
     return edge_masks
 
 def get_edge_masks_concentric(J, M, N, N_rings, d0=1):
-    edge_masks = torch.empty((N_rings, M, N))
+    edge_dx = min(M // 4, 2**(J - 1) * d0)
+    edge_dy = min(N // 4, 2**(J - 1) * d0)
+
     X, Y = torch.meshgrid(torch.arange(M), torch.arange(N), indexing='ij')
-    for i in range(N_rings):
-        edge_dx = min(M//4, 2**(J- 1) * d0)
-        edge_dy = min(N//4, 2**(J- 1) * d0)
-        edge_masks[i] = (X>=edge_dx) * (X<=M-edge_dx) * (Y>=edge_dy) * (Y<=N-edge_dy)
+    mask = (X >= edge_dx) & (X <= M - edge_dx) & (Y >= edge_dy) & (Y <= N - edge_dy)
+    mask = mask.to(dtype=torch.float32)  # Convert to float before use
+
+    edge_masks = mask.expand(N_rings, -1, -1).clone()  # shape: (N_rings, M, N)
     return edge_masks
 
 

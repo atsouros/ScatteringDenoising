@@ -65,12 +65,14 @@ def add_white_noise(image_target, snr_db):
         snr_linear = 10 ** (snr_db / 10)
         noise_power = signal_power / snr_linear
         noise = np.random.normal(scale=np.sqrt(noise_power), size=target.shape)
+        # image_init.append(target + noise)
         image_init.append(target + noise)
+
     return tuple(image_init)
 
 threshold_func = None
 remove_edge = True
-n_realizations = 10
+n_realizations = 1
 denoised_images = []
 
 for i in range(n_realizations):
