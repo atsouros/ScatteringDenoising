@@ -698,15 +698,15 @@ class Scattering2d(object):
          # calculate scattering fields
         I1 = torch.fft.ifftn(
             data_f[:,None,None,:,:] * filters_set[None,:J,:,:,:], dim=(-2,-1)
-        ).abs() * edge_mask
+        ).abs() 
         I1_f= torch.fft.fftn(I1, dim=(-2,-1)) 
 
-        P00 = (I1**2).mean((-2,-1))
-        S1  = (I1).mean((-2,-1))
+        # P00 = (I1**2).mean((-2,-1))
+        # S1  = (I1).mean((-2,-1))
         
 
-        # P00 = (I1**2 * edge_mask).mean((-2,-1))
-        # S1  = (I1 * edge_mask).mean((-2,-1))
+        P00 = (I1**2 * edge_mask).mean((-2,-1))
+        S1  = (I1 * edge_mask).mean((-2,-1))
 #         if get_variance:
 #             P00_sigma = (I1**2 * edge_mask).std((-2,-1))
 #             S1_sigma  = (I1 * edge_mask).std((-2,-1))
@@ -755,9 +755,10 @@ class Scattering2d(object):
                         data_f_small.view(N_image,1,1,M3,N3) * torch.conj(I1_f2_wf3_small)
                     ).mean((-2,-1)) * fft_factor / norm_factor_C01
                 else:
-                    C01[:,j2,j3,:,:] = (
+                    prod = (
                         data_small.view(N_image,1,1,M3,N3) * torch.conj(I12_w3_small)
-                    )[...,edge_dx:M3-edge_dx, edge_dy:N3-edge_dy].mean((-2,-1)) * fft_factor / norm_factor_C01
+                    )[...,edge_dx:M3-edge_dx, edge_dy:N3-edge_dy]
+                    C01[:,j2,j3,:,:] = prod.mean((-2,-1)) * fft_factor / norm_factor_C01
                 if j2 <= j3:
                     for j1 in range(0, j2+1):
                         if eval(C11_criteria):
@@ -777,12 +778,13 @@ class Scattering2d(object):
                                         ).mean((-2,-1)) * fft_factor
                             else:
                                 if not if_large_batch:
-                                    # [N_image,l1,l2,l3,x,y]
-                                    C11_pre_norm[:,j1,j2,j3,:,:,:] = (
+                                    prod = (
                                         I1_small[:,j1].view(N_image,L,1,1,M3,N3) * torch.conj(
                                             I12_w3_2_small.view(N_image,1,L,L,M3,N3)
                                         )
-                                    )[...,edge_dx:-edge_dx, edge_dy:-edge_dy].mean((-2,-1)) * fft_factor
+                           
+                                    )[...,edge_dx:-edge_dx, edge_dy:-edge_dy]
+                                    C11_pre_norm[:,j1,j2,j3,:,:,:] = prod.mean((-2,-1)) * fft_factor
                                 else:
                                     for l1 in range(L):
                                     # [N_image,l2,l3,x,y]
@@ -799,10 +801,11 @@ class Scattering2d(object):
         if normalization=='P00':
             if use_ref: P = ref_P00
             else: P = P00
+            # factor = (P[:,:,None,None,:,None,None] * P[:,None,:,None,None,:,None]
+            # )**(0.5*pseudo_coef)
+            factor = 1.
             #.view(N_image,J,1,1,L,1,1) * .view(N_image,1,J,1,1,L,1)
-            C11 = C11_pre_norm / (
-                P[:,:,None,None,:,None,None] * P[:,None,:,None,None,:,None]
-            )**(0.5*pseudo_coef)
+            C11 = C11_pre_norm / factor
         if normalization=='P11':
             if use_ref: P = ref_P11
             else: P = P11
@@ -886,7 +889,7 @@ class Scattering2d(object):
         for_synthesis = torch.cat((
             (data.mean((-2,-1))/data.std((-2,-1)))[:,None],
             P00.reshape((N_image, -1)).log(), 
-            P00g.reshape((N_image, -1)).log(),
+            # P00g.reshape((N_image, -1)).log(),
             S1.reshape((N_image, -1)).log(),
             C01[:,select_and_index['select_2']].real, 
             C01[:,select_and_index['select_2']].imag, 
