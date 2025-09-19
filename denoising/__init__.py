@@ -253,7 +253,7 @@ Use * or + to connect more than one condition.
                 )
                 return s_cov_func(coeff_dict)
 
-    st_calc = Scattering2d(M, N, J, L, device, wavelets, l_oversampling=l_oversampling, frequency_factor=frequency_factor, remove_edge = remove_edge)
+    st_calc = Scattering2d(M, N, J, L, device, wavelets, l_oversampling=l_oversampling, frequency_factor=frequency_factor, remove_edge=remove_edge)
     def func(image):
         coef_list = []
         coef_list.append(func_s(image))
@@ -481,7 +481,7 @@ def denoise(
 
             std_single = std['single']
             std_partial = std['partial']
-            # std_double = std['double'][0]
+            std_double = std['double'][0]
             mean_std = std['noise_mean_std']
 
             if epochNo is None or epochNo % 2 == 0:
@@ -490,9 +490,7 @@ def denoise(
                     loss_func_single(targets[1], images[1], std_single[1], contamination_arr[:, 1]),
                     loss_func_partial(targets[0], images[0], fixed_img, std_partial[0], contamination_arr[:, 0]),
                     loss_func_partial(targets[0], images[0], fixed_img, std_partial[1], contamination_arr[:, 1]),
-                    # loss_func_double(targets[0], images[0], targets[1], images[1], std_double, contamination_arr),
-                    # loss_func_CC(targets[0], images[0], mean_std[0]),
-                    # loss_func_CC(targets[1], images[1], mean_std[1])
+                    loss_func_double(targets[0], images[0], targets[1], images[1], std_double, contamination_arr)
                 ]
             else:
                 loss_terms = [
@@ -500,57 +498,27 @@ def denoise(
                     loss_func_single(targets[1], images[1], std_single[1], contamination_arr[:, 1]),
                     loss_func_partial(targets[0], images[0], fixed_img, std_partial[0], contamination_arr[:, 0]),
                     loss_func_partial(targets[0], images[0], fixed_img, std_partial[1], contamination_arr[:, 1]),
-                    # loss_func_double(targets[0], images[0], targets[1], images[1], std_double, contamination_arr),
+                    loss_func_double(targets[0], images[0], targets[1], images[1], std_double, contamination_arr),
                     loss_func_CC(targets[0], images[0], mean_std[0]),
                     loss_func_CC(targets[1], images[1], mean_std[1])
                 ]
+
             return sum(loss_terms) / len(loss_terms)
     else:
         def loss_func(*args):
             assert len(args) % 2 == 0, "Expecting equal number of targets and images"
             mid = len(args) // 2
-            targets = torch.stack(args[:mid])
-            images  = torch.stack(args[mid:])
+            targets, images = args[:mid], args[mid:]
 
-            loss_terms = [loss_func_single(targets[0], images[0]),
-                          loss_func_single(targets[1], images[1]),
-                          loss_func_double(targets[0], images[0], targets[1], images[1])
+            loss_terms = [                
+                loss_func_single(targets[0], images[0]),
+                loss_func_single(targets[1], images[1]),
+                loss_func_double(targets[0], images[0], targets[1], images[1]),
+                loss_func_partial(targets[0], images[0], fixed_img),
+                loss_func_partial(targets[1], images[1], fixed_img)
             ]
 
-            return sum(loss_terms) / len(loss_terms) * 1e1
-        
-    
-    # def loss_func(*args):
-    #     assert len(args) % 2 == 0, "Expecting equal number of targets and images"
-    #     mid = len(args) // 2
-    #     targets = args[:mid]
-    #     images = args[mid:]
-
-    #     loss1 = loss_func_single(targets[0], images[0], std[0], contamination_arr[:, 0])
-    #     loss2 = loss_func_single(targets[1], images[1], std[1], contamination_arr[:, 1])
-    #     loss3 = loss_func_double(targets[0], images[0], targets[1], images[1], contamination_arr)
-
-    #     return (loss1 + loss2 + loss3) / 3
-
-    # def loss_func(*args):
-    #     *targets, image = args
-
-    #     T_d = 10
-    #     nu = (217, 353)
-
-    #     # Compute correct (unnormalized) scaling factors
-    #     f1 = image.new_tensor(MBB_factor(T_d, nu[0] * 1e9))
-    #     f2 = image.new_tensor(MBB_factor(T_d, nu[1] * 1e9))
-
-    #     # Scale the shared image to create frequency-specific versions
-    #     images = (image * f1 * 1e20, image * f2 * 1e20)
-
-    #     # Compute loss
-    #     loss1 = loss_func_single(targets[0], images[0], std[0], contamination_arr[:, 0])
-    #     loss2 = loss_func_single(targets[1], images[1], std[1], contamination_arr[:, 1])
-    #     loss3 = loss_func_double(targets[0], images[0], targets[1], images[1], contamination_arr)
-
-    #     return (loss1 + loss2 + loss3) / 3
+            return sum(loss_terms) / len(loss_terms)
 
     def loss_func_single(target, image, _std = None, contamination_arr = None):
         dtype = torch.double if precision == 'double' else torch.float
@@ -577,7 +545,7 @@ def denoise(
 
             # Step 4: Normalize and compute squared norm
             diff = noisy_stats_tensor - target_stats[None, :]
-            normalized_diff = diff / _std[None, :]
+            normalized_diff = diff # / _std[None, :]
             squared_norms = torch.sum(normalized_diff ** 2, dim=-1) / normalized_diff.size(-1)
         else:
             # Step 1: Compute reference statistics and running statistics, ensure shape and dtype
@@ -627,7 +595,7 @@ def denoise(
             valid_mask = _std != 0
             diff = diff[:, valid_mask]
             std = _std[valid_mask]
-            normalized_diff = diff / std[None, :]
+            normalized_diff = diff # / std[None, :]
             squared_norms = torch.sum(normalized_diff ** 2, dim=-1) / normalized_diff.size(-1)
 
             return squared_norms.mean()
@@ -691,7 +659,7 @@ def denoise(
 
             # Step 4: Normalize and compute loss
             diff = noisy_stats_tensor - target_stats[None, :]
-            normalized_diff = diff / std_double[None, :]
+            normalized_diff = diff # / std_double[None, :]
             squared_norms = torch.sum(normalized_diff ** 2, dim=-1) / normalized_diff.size(-1)
 
         else:
@@ -714,7 +682,7 @@ def denoise(
             noisy_stats_tensor = func(target - image, target)
 
             diff = noisy_stats_tensor - target_stats[None, :]
-            normalized_diff = diff / std[None, :]
+            normalized_diff = diff # / std[None, :]
             squared_norms = torch.sum(normalized_diff ** 2, dim=-1) / normalized_diff.size(-1)
 
             mean_val = squared_norms.mean()
@@ -801,7 +769,6 @@ def denoise_general(
         history_size=min(steps // 2, 150), line_search_fn=None
     )
 
-    loss_arr = []
     # Define closure for LBFGS optimizer
     def closure():
         optimizer.zero_grad()
@@ -819,7 +786,6 @@ def denoise_general(
         # Print progress if required 
         if print_each_step:
             print(f'Current Loss: {loss.item():.2e}')
-        loss_arr.append(loss.item())
 
         # Backpropagate the loss
         loss.backward()
@@ -836,7 +802,7 @@ def denoise_general(
     print('Time used: ', t_end - t_start, 's')
 
     # Return the optimized images as numpy arrays
-    return tuple(img.cpu().detach().numpy() for img in image_model.get_images()), loss_arr
+    return tuple(img.cpu().detach().numpy() for img in image_model.get_images())
 
 
 def scale_annotation_a_b(idx_info):
