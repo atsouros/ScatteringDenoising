@@ -24,7 +24,7 @@ u_path = glob.glob(f"{base_path}signal/patch_{patch}/patch_{patch}_U353*.npy")[0
 
 def downsample(image):
     func = utils.downsample_by_four
-    return func(image)
+    return func(func(image))
 
 # # Load it
 signal_Q = np.load(q_path)
@@ -56,33 +56,32 @@ contamination_arr = np.stack([contamination_arr_Q, contamination_arr_U], axis=1)
 
 image_target = (signal_Q, signal_U)
 threshold_func = None
-remove_edge = True
+remove_edge = False
 
 std = {
     'single': denoising.compute_std(image_target, contamination_arr=contamination_arr,
                                     s_cov_func=threshold_func, remove_edge=remove_edge, precision='double'),
 
-    'partial': denoising.compute_std_partial(image_target, contamination_arr, signal_I,
-                                           remove_edge=remove_edge, precision='double'),                               
+    # 'partial': denoising.compute_std_partial(image_target, contamination_arr, signal_I,
+    #                                        remove_edge=remove_edge, precision='double'),                               
 
-    # 'double': denoising.compute_std_double(image_target, contamination_arr=contamination_arr,
-    #                                        remove_edge=remove_edge, precision='double'),
+    'double': denoising.compute_std_double(image_target, contamination_arr=contamination_arr,
+                                           remove_edge=remove_edge, precision='double'),
 
     'noise_mean_std': denoising.noise_mean_std(contamination_arr, remove_edge=remove_edge, precision='double')
 }
 
 image_init = image_target
 
-n_epochs = 4 #number of epochs
-loss_arr = []
+print(image_init[0].shape)
+
+n_epochs = 2 #number of epochs
 # decontaminate
 for i in range(n_epochs):
     print(f'Starting epoch {i+1}')
-    running_map, loss = denoising.denoise(image_target, contamination_arr = contamination_arr, fixed_img=signal_I, std = std, seed=0, print_each_step=True, 
-                                    steps = 40, n_batch = 50, s_cov_func=threshold_func, image_init = image_init, remove_edge=remove_edge, precision='double', 
+    running_map = denoising.denoise(image_target, contamination_arr = contamination_arr, std = std, fixed_img=signal_I, seed=0, print_each_step=True, 
+                                    steps = 25, n_batch = 25, s_cov_func=threshold_func, image_init = image_init, remove_edge=remove_edge, precision='double', 
                                     if_large_batch=False, epochNo = i)
-    loss_arr.append(loss)
-    
     running_map = (running_map[0], running_map[1])
     image_init = running_map
     torch.cuda.empty_cache()
@@ -93,11 +92,11 @@ for i in range(n_epochs):
             'single': denoising.compute_std(running_map, contamination_arr=contamination_arr,
                                             s_cov_func=threshold_func, remove_edge=remove_edge, precision='double'),
 
-            'partial': denoising.compute_std_partial(running_map, contamination_arr, signal_I,
-                                                remove_edge=remove_edge, precision='double'),                               
+            # 'partial': denoising.compute_std_partial(running_map, contamination_arr, signal_I,
+            #                                     remove_edge=remove_edge, precision='double'),                               
 
-            # 'double': denoising.compute_std_double(running_map, contamination_arr=contamination_arr,
-            #                                     remove_edge=remove_edge, precision='double'),
+            'double': denoising.compute_std_double(running_map, contamination_arr=contamination_arr,
+                                                remove_edge=remove_edge, precision='double'),
 
             'noise_mean_std': std['noise_mean_std']
             }
@@ -112,5 +111,4 @@ image_syn_U = running_map[1]
 image_denoised = np.stack([image_syn_Q[0], image_syn_U[0]])  # Ensure it's an array
 
 # Save results
-np.save(f"image_denoised_patch_{patch}_removeEdge={remove_edge}.npy", image_denoised)
-np.save(f"loss_{patch}_removeEdge={remove_edge}.npy", loss_arr)
+np.save(f"test.npy", image_denoised)

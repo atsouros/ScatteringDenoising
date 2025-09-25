@@ -703,14 +703,12 @@ class Scattering2d(object):
 #             P00_sigma = (I1**2 * edge_mask).std((-2,-1))
 #             S1_sigma  = (I1 * edge_mask).std((-2,-1))
 
-        if use_ref:
-            P00 = (I1**2 * edge_mask).mean((-2,-1)) / ref_P00
-            S1  = (I1 * edge_mask).mean((-2,-1)) / torch.sqrt(ref_P00)
-        else:
-            P00 = (I1**2 * edge_mask).mean((-2,-1))
-            S1  = (I1 * edge_mask).mean((-2,-1))
-
-
+        # if use_ref:
+        #     P00 = (I1**2 * edge_mask).mean((-2,-1)) / ref_P00
+        #     S1  = (I1 * edge_mask).mean((-2,-1)) / torch.sqrt(ref_P00)
+        # else:
+        #     P00 = (I1**2 * edge_mask).mean((-2,-1))
+        #     S1  = (I1 * edge_mask).mean((-2,-1))
             
         if pseudo_coef != 1:
             I1 = I1**pseudo_coef
@@ -889,9 +887,9 @@ class Scattering2d(object):
         index_for_synthesis_iso = select_and_index['index_for_synthesis_iso']
         for_synthesis = torch.cat((
             (data.mean((-2,-1))/data.std((-2,-1)))[:,None],
-            P00.reshape((N_image, -1)), 
+            P00.reshape((N_image, -1)).log(), 
             # P00g.reshape((N_image, -1)).log(),
-            S1.reshape((N_image, -1)),
+            S1.reshape((N_image, -1)).log(),
             C01[:,select_and_index['select_2']].real, 
             C01[:,select_and_index['select_2']].imag, 
             C11[:,select_and_index['select_3']].real, 

@@ -480,29 +480,29 @@ def denoise(
             targets, images = args[:mid], args[mid:]
 
             std_single = std['single']
-            std_partial = std['partial']
+            # std_partial = std['partial']
             std_double = std['double'][0]
             mean_std = std['noise_mean_std']
 
             if epochNo is None or epochNo % 2 == 0:
                 loss_terms = [
-                    loss_func_single(targets[0], images[0], std_single[0], contamination_arr[:, 0]),
-                    loss_func_single(targets[1], images[1], std_single[1], contamination_arr[:, 1]),
-                    loss_func_partial(targets[0], images[0], fixed_img, std_partial[0], contamination_arr[:, 0]),
-                    loss_func_partial(targets[0], images[0], fixed_img, std_partial[1], contamination_arr[:, 1]),
+                    loss_func_single(targets[0], images[0], std = std_single[0], contamination_arr = contamination_arr[:, 0]),
+                    loss_func_single(targets[1], images[1], std = std_single[1], contamination_arr = contamination_arr[:, 1]),
+                    # loss_func_partial(targets[0], images[0], fixed_img, std_partial[0], contamination_arr[:, 0]),
+                    # loss_func_partial(targets[0], images[0], fixed_img, std_partial[1], contamination_arr[:, 1]),
                     loss_func_double(targets[0], images[0], targets[1], images[1], std_double, contamination_arr)
                 ]
             else:
                 loss_terms = [
-                    loss_func_single(targets[0], images[0], std_single[0], contamination_arr[:, 0]),
-                    loss_func_single(targets[1], images[1], std_single[1], contamination_arr[:, 1]),
-                    loss_func_partial(targets[0], images[0], fixed_img, std_partial[0], contamination_arr[:, 0]),
-                    loss_func_partial(targets[0], images[0], fixed_img, std_partial[1], contamination_arr[:, 1]),
+                    loss_func_single(targets[0], images[0], std = std_single[0], contamination_arr = contamination_arr[:, 0]),
+                    loss_func_single(targets[1], images[1], std = std_single[1], contamination_arr = contamination_arr[:, 1]),
+                    # loss_func_partial(targets[0], images[0], fixed_img, std_partial[0], contamination_arr[:, 0]),
+                    # loss_func_partial(targets[0], images[0], fixed_img, std_partial[1], contamination_arr[:, 1]),
                     loss_func_double(targets[0], images[0], targets[1], images[1], std_double, contamination_arr),
                     loss_func_CC(targets[0], images[0], mean_std[0]),
                     loss_func_CC(targets[1], images[1], mean_std[1])
                 ]
-
+            
             return sum(loss_terms) / len(loss_terms)
     else:
         def loss_func(*args):
@@ -520,10 +520,10 @@ def denoise(
 
             return sum(loss_terms) / len(loss_terms)
 
-    def loss_func_single(target, image, _std = None, contamination_arr = None):
+    def loss_func_single(target, image, std = None, contamination_arr = None):
         dtype = torch.double if precision == 'double' else torch.float
 
-        if contamination_arr is not None and _std is not None:
+        if contamination_arr is not None:
             indices = np.random.choice(contamination_arr.shape[0], size=n_batch, replace=False)
             contamination_arr = contamination_arr[indices]
             # Convert to torch if needed
@@ -543,10 +543,20 @@ def denoise(
             # Step 3: Compute noisy statistics in a batched way
             noisy_stats_tensor = func(cont_images[:, 0], target)  # Shape: (n_realizations, N_coeffs)
 
-            # Step 4: Normalize and compute squared norm
             diff = noisy_stats_tensor - target_stats[None, :]
-            normalized_diff = diff # / _std[None, :]
-            squared_norms = torch.sum(normalized_diff ** 2, dim=-1) / normalized_diff.size(-1)
+
+
+            if std is not None:
+                valid_mask = std != 0
+                diff = diff[:, valid_mask]
+                std = std[valid_mask]
+                normalized_diff = diff # / std[None, :]
+                normalized_diff = noisy_stats_tensor - target_stats[None, :]
+                squared_norms = torch.sum(normalized_diff ** 2, dim=-1) / normalized_diff.size(-1)
+            else:
+                diff = noisy_stats_tensor - target_stats[None, :]
+                squared_norms = torch.sum(diff ** 2, dim=-1) / diff.size(-1)
+
         else:
             # Step 1: Compute reference statistics and running statistics, ensure shape and dtype
             target_stats = func(target, target).squeeze(0).to(dtype=dtype)
@@ -570,7 +580,7 @@ def denoise(
         image = image.to(device=device, dtype=dtype)
         fixed_tensor = fixed_tensor.to(device=device, dtype=dtype)
 
-        if contamination_arr is not None and _std is not None:
+        if contamination_arr is not None:
             indices = np.random.choice(contamination_arr.shape[0], size=n_batch, replace=False)
             contamination_arr = contamination_arr[indices]
 
@@ -578,7 +588,9 @@ def denoise(
                 contamination_arr = torch.from_numpy(contamination_arr)
 
             contamination_tensor = contamination_arr.to(device=device, dtype=dtype)
-            _std = _std.to(device=device, dtype=dtype)
+
+            if _std is not None:
+                _std = _std.to(device=device, dtype=dtype)
 
             # Step 1: Compute reference statistics
             target_stats = func(target, target, fixed_tensor, fixed_tensor).squeeze(0)
@@ -659,6 +671,10 @@ def denoise(
 
             # Step 4: Normalize and compute loss
             diff = noisy_stats_tensor - target_stats[None, :]
+
+            valid_mask = std_double != 0
+            diff = diff[:, valid_mask]
+            std_double = std_double[valid_mask]
             normalized_diff = diff # / std_double[None, :]
             squared_norms = torch.sum(normalized_diff ** 2, dim=-1) / normalized_diff.size(-1)
 
@@ -682,6 +698,10 @@ def denoise(
             noisy_stats_tensor = func(target - image, target)
 
             diff = noisy_stats_tensor - target_stats[None, :]
+
+            valid_mask = std != 0
+            diff = diff[:, valid_mask]
+            std = std[valid_mask]
             normalized_diff = diff # / std[None, :]
             squared_norms = torch.sum(normalized_diff ** 2, dim=-1) / normalized_diff.size(-1)
 
@@ -705,7 +725,6 @@ def denoise(
             squared_norms = torch.sum(diff ** 2, dim=-1) / diff.size(-1)
 
             return squared_norms.mean()
-    # return squared_norms.mean()
 
     image_syn = denoise_general(
     target, image_init, func, loss_func,  
