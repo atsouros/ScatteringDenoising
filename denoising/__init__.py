@@ -480,7 +480,7 @@ def denoise(
             targets, images = args[:mid], args[mid:]
 
             std_single = std['single']
-            # std_partial = std['partial']
+            std_partial = std['partial']
             std_double = std['double'][0]
             mean_std = std['noise_mean_std']
 
@@ -488,19 +488,20 @@ def denoise(
                 loss_terms = [
                     loss_func_single(targets[0], images[0], std = std_single[0], contamination_arr = contamination_arr[:, 0]),
                     loss_func_single(targets[1], images[1], std = std_single[1], contamination_arr = contamination_arr[:, 1]),
-                    # loss_func_partial(targets[0], images[0], fixed_img, std_partial[0], contamination_arr[:, 0]),
-                    # loss_func_partial(targets[0], images[0], fixed_img, std_partial[1], contamination_arr[:, 1]),
+                    loss_func_partial(targets[0], images[0], fixed_img, std_partial[0], contamination_arr[:, 0]),
+                    loss_func_partial(targets[0], images[0], fixed_img, std_partial[1], contamination_arr[:, 1]),
                     loss_func_double(targets[0], images[0], targets[1], images[1], std_double, contamination_arr)
                 ]
             else:
                 loss_terms = [
                     loss_func_single(targets[0], images[0], std = std_single[0], contamination_arr = contamination_arr[:, 0]),
                     loss_func_single(targets[1], images[1], std = std_single[1], contamination_arr = contamination_arr[:, 1]),
-                    # loss_func_partial(targets[0], images[0], fixed_img, std_partial[0], contamination_arr[:, 0]),
-                    # loss_func_partial(targets[0], images[0], fixed_img, std_partial[1], contamination_arr[:, 1]),
+                    loss_func_partial(targets[0], images[0], fixed_img, std_partial[0], contamination_arr[:, 0]),
+                    loss_func_partial(targets[0], images[0], fixed_img, std_partial[1], contamination_arr[:, 1]),
                     loss_func_double(targets[0], images[0], targets[1], images[1], std_double, contamination_arr),
                     loss_func_CC(targets[0], images[0], mean_std[0]),
-                    loss_func_CC(targets[1], images[1], mean_std[1])
+                    loss_func_CC(targets[1], images[1], mean_std[1]), 
+                    loss_func_residual(image, target, data, nuisances, std=None)
                 ]
             
             return sum(loss_terms) / len(loss_terms)
@@ -725,6 +726,75 @@ def denoise(
             squared_norms = torch.sum(diff ** 2, dim=-1) / diff.size(-1)
 
             return squared_norms.mean()
+
+    def loss_func_residual(image, target, data, nuisances, std=None):
+        """
+        Minimize < Φ(u, d-u) - Φ(u, c_i) >_i in MSE sense,
+        using:
+        - Φ(u, d-u) -> func(image, target, d - image, target)
+        - Φ(u, c_i) -> mean_i func(image, nuisance_i)
+
+        Args
+        ----
+        image : torch.Tensor or np.ndarray   # u, shape (1,H,W)
+        target: torch.Tensor or np.ndarray   # normalization reference
+        data  : torch.Tensor or np.ndarray   # d, shape (1,H,W)
+        nuisances : torch.Tensor | list[Tensor] | np.ndarray
+            If tensor/ndarray: shape (N,1,H,W). If list: each (1,H,W).
+        std : torch.Tensor or np.ndarray or None
+            Optional per-coefficient std for masking zeros (no divide, matching your pattern).
+
+        Returns
+        -------
+        torch.Tensor  # scalar loss
+        """
+        dtype = torch.double if precision == 'double' else torch.float
+
+        # --- to torch ---
+        image  = torch.from_numpy(image)  if isinstance(image,  np.ndarray) else image
+        target = torch.from_numpy(target) if isinstance(target, np.ndarray) else target
+        data   = torch.from_numpy(data)   if isinstance(data,   np.ndarray) else data
+
+        device = image.device
+        image  = image.to(device=device, dtype=dtype)
+        target = target.to(device=device, dtype=dtype)
+        data   = data.to(device=device, dtype=dtype)
+
+        # --- Φ(u, d-u) ---
+        stats_ud = func(image, target, data - image, target).squeeze(0).to(dtype=dtype)
+
+        # --- Φ(u, c_i), averaged over nuisances ---
+        # Accept list, tensor, or ndarray
+        if isinstance(nuisances, np.ndarray):
+            nuisances = torch.from_numpy(nuisances)
+        if isinstance(nuisances, list):
+            uc_list = []
+            for c in nuisances:
+                c = torch.from_numpy(c) if isinstance(c, np.ndarray) else c
+                c = c.to(device=device, dtype=dtype)
+                uc_list.append(func(image, c).squeeze(0).to(dtype=dtype))
+            stats_uc_mean = torch.stack(uc_list, dim=0).mean(dim=0)
+        else:
+            # nuisances is a tensor of shape (N,1,H,W)
+            nuisances = nuisances.to(device=device, dtype=dtype)
+            uc_list = []
+            for k in range(nuisances.shape[0]):
+                uc_list.append(func(image, nuisances[k]).squeeze(0).to(dtype=dtype))
+            stats_uc_mean = torch.stack(uc_list, dim=0).mean(dim=0)
+
+        # --- difference vector: Φ(u, d-u) - <Φ(u, c_i)>_i ---
+        diff = stats_ud - stats_uc_mean
+
+        # --- optional masking by std zeros (no divide) ---
+        if std is not None:
+            std = torch.from_numpy(std) if isinstance(std, np.ndarray) else std
+            std = std.to(device=device, dtype=dtype)
+            valid_mask = (std != 0)
+            diff = diff[valid_mask]
+
+        # --- coefficient-wise MSE (mean over coeffs) ---
+        loss = torch.mean(diff ** 2)
+        return loss
 
     image_syn = denoise_general(
     target, image_init, func, loss_func,  
