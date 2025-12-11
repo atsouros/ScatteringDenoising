@@ -509,6 +509,8 @@ class Scattering2d(object):
         for_synthesis = torch.cat((
             S1.reshape((N_image, -1)).log(), 
             S2[:,S2[0].abs()>-99].log()
+            # S1.reshape((N_image, -1)), 
+            # S2[:,S2[0].abs()>-99]
         ), dim=-1)
         for_synthesis_iso = torch.cat((
             S1_iso.reshape((N_image, -1)).log(), 
@@ -694,11 +696,11 @@ class Scattering2d(object):
         ).abs() 
         I1_f= torch.fft.fftn(I1, dim=(-2,-1)) 
 
-        # P00 = (I1**2).mean((-2,-1))
-        # S1  = (I1).mean((-2,-1))
+        P00 = (I1**2).mean((-2,-1))
+        S1  = (I1).mean((-2,-1))
         
-        P00 = (I1**2 * edge_mask).mean((-2,-1))
-        S1  = (I1 * edge_mask).mean((-2,-1))
+        # P00 = (I1**2 * edge_mask).mean((-2,-1))
+        # S1  = (I1 * edge_mask).mean((-2,-1))
 #         if get_variance:
 #             P00_sigma = (I1**2 * edge_mask).std((-2,-1))
 #             S1_sigma  = (I1 * edge_mask).std((-2,-1))
@@ -888,8 +890,11 @@ class Scattering2d(object):
         for_synthesis = torch.cat((
             (data.mean((-2,-1))/data.std((-2,-1)))[:,None],
             P00.reshape((N_image, -1)).log(), 
-            # P00g.reshape((N_image, -1)).log(),
+            P00g.reshape((N_image, -1)).log(),
             S1.reshape((N_image, -1)).log(),
+            # P00.reshape((N_image, -1)), 
+            # P00g.reshape((N_image, -1)),
+            # S1.reshape((N_image, -1)),
             C01[:,select_and_index['select_2']].real, 
             C01[:,select_and_index['select_2']].imag, 
             C11[:,select_and_index['select_3']].real, 
@@ -1256,6 +1261,8 @@ class Scattering2d(object):
             (data_b.mean((-2,-1))/data_b.std((-2,-1)))[:,None],
             P00_a.reshape((N_image, -1)).log(), 
             P00_b.reshape((N_image, -1)).log(), 
+            P00_a.reshape((N_image, -1)), 
+            P00_b.reshape((N_image, -1)), 
             Corr00.reshape((N_image, -1)).real, 
             Corr00.reshape((N_image, -1)).imag, 
             C01[:,:,select_and_index['select_2']].reshape((N_image, -1)).real, 
