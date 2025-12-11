@@ -184,6 +184,10 @@ def make_denoise_loss_function(
             diff = running_stats - target_stats
             squared_norms = torch.sum(diff ** 2, dim=-1) / diff.size(-1)
 
+        # cleanup
+        del contamination_tensor, cont_images, noisy_stats_tensor, diff
+        torch.cuda.empty_cache()
+
         return squared_norms.mean()
 
     def loss_func_partial(target_p, image_p, fixed_img_p, std=None, contamination_arr_p=None):
@@ -229,6 +233,9 @@ def make_denoise_loss_function(
             diff = diff[:, valid_mask]
             normalized_diff = diff # / std[valid_mask][None, :]
             squared_norms = torch.sum(normalized_diff ** 2, dim=-1) / normalized_diff.size(-1)
+
+            del contamination_tensor, cont_images, fixed_batch, noisy_stats_tensor, diff
+            torch.cuda.empty_cache()
 
             return squared_norms.mean()
 
@@ -297,6 +304,9 @@ def make_denoise_loss_function(
             running_stats = func(image1, target1, image2, target2).squeeze(0).to(dtype=dtype)
             diff = running_stats - target_stats
             squared_norms = torch.sum(diff ** 2, dim=-1) / diff.size(-1)
+
+        del contamination_tensor, cont1, cont2, cont_images1, cont_images2, noisy_stats_tensor, diff
+        torch.cuda.empty_cache()
 
         return squared_norms.mean()
 
@@ -1274,12 +1284,11 @@ def denoise_general(
     image_inits = [to_tensor(img) for img in image_init]
 
     # # calculate statistics for target images
-    estimator_single = estimator_function(*targets)
-    estimator_double = estimator_function(*targets, *targets)
+    # estimator_single = estimator_function(*targets)
+    # estimator_double = estimator_function(*targets, *targets)
     
-    print('# of estimators (single): ', estimator_single.shape[-1])
-    print('# of estimators (double): ', estimator_double.shape[-1])
-
+    # print('# of estimators: ', estimator_single.shape[-1] + estimator_double.shape[-1])
+    
     # Define optimizable image model
     class OptimizableImage(torch.nn.Module):
         def __init__(self, input_inits):
